@@ -104,6 +104,15 @@ h2{font-size:18px;font-weight:700;letter-spacing:-.01em;margin:0}
 .set.warm .stepper,.set.warm .check{opacity:.6}
 .card-row.warm{opacity:.6}
 
+#update{
+  position:fixed;left:0;right:0;top:0;z-index:70;display:none;
+  background:var(--blue);color:#fff;font-weight:700;gap:10px;
+  align-items:center;justify-content:space-between;
+  padding:calc(10px + env(safe-area-inset-top)) var(--pad) 10px;
+}
+#update.on{display:flex}
+#update button{color:#fff;font-weight:800;padding:6px 10px;border:1px solid rgba(255,255,255,.45);border-radius:8px}
+
 #menu{position:fixed;inset:0;z-index:80;display:none;background:rgba(0,0,0,.6)}
 #menu.on{display:block}
 #menu .panel{
@@ -262,6 +271,7 @@ nav button.on{color:var(--chalk)}
       <button class="btn btn-ghost btn-sm" id="btn-new-routine">+ Nova</button>
     </div>
     <div id="routines"></div>
+    <p class="note" id="ver-home" style="text-align:center;margin-top:32px"></p>
   </div>
 </section>
 
@@ -329,6 +339,10 @@ nav button.on{color:var(--chalk)}
     </p>
     <button class="btn btn-ghost" id="btn-csv" style="margin-bottom:8px">Exportar histórico (.csv)</button>
     <div class="hr"></div>
+    <div class="eyebrow" style="margin-bottom:10px">Versão</div>
+    <p class="note" id="ver-info" style="margin:0 0 12px"></p>
+    <button class="btn btn-ghost" id="btn-update" style="margin-bottom:8px">Buscar atualização</button>
+    <div class="hr"></div>
     <button class="btn btn-danger" id="btn-wipe">Apagar tudo</button>
     <p class="note" style="margin-top:14px" id="storage-note"></p>
   </div>
@@ -359,6 +373,15 @@ nav button.on{color:var(--chalk)}
   <div class="wrap" id="sheet-body"></div>
 </div>
 <div class="sheet-foot" id="sheet-foot"></div>
+
+<!-- ======================= ATUALIZAÇÃO ======================= -->
+<div id="update">
+  <span>Nova versão disponível</span>
+  <span style="display:flex;gap:6px">
+    <button id="update-later">Depois</button>
+    <button id="update-go">Atualizar</button>
+  </span>
+</div>
 
 <!-- ======================= MENU DE TIPO ======================= -->
 <div id="menu"><div class="panel"></div></div>
@@ -1267,6 +1290,12 @@ function renderCfg(){
   $$('.rest-opt').forEach(b=>b.style.color = (+b.dataset.s===db.cfg.rest)?'var(--blue)':'var(--chalk)');
   $$('.inc-opt').forEach(b=>b.style.borderColor = (+b.dataset.i===db.cfg.inc)?'var(--blue)':'var(--line)');
   $$('.inc-opt').forEach(b=>b.style.color = (+b.dataset.i===db.cfg.inc)?'var(--blue)':'var(--chalk)');
+  const cache = swVersion ? `v${swVersion}` : (location.protocol.startsWith('http') ? 'ainda não instalado' : 'não se aplica (arquivo local)');
+  const divergiu = swVersion && swVersion!==APP_VERSION;
+  $('#ver-info').innerHTML =
+    `App <b>v${APP_VERSION}</b> · ${APP_DATE}<br>Service worker: ${cache}` +
+    (divergiu ? `<br><b style="color:var(--yellow)">As versões não batem — você está vendo arquivos antigos.
+       Toque em "Buscar atualização".</b>` : '');
   $('#storage-note').textContent = persistent
     ? 'Os dados ficam apenas neste aparelho, no armazenamento do navegador. Nada sai daqui. Exporte um backup de vez em quando — limpar os dados do navegador apaga tudo.'
     : 'Atenção: este ambiente não permite salvar. Os dados existem só enquanto a página estiver aberta. Abra o arquivo direto no navegador do celular para que o registro seja gravado.';
@@ -1282,6 +1311,16 @@ function baixar(nome, texto, mime){
   URL.revokeObjectURL(a.href);
 }
 const hoje=()=>new Date().toISOString().slice(0,10);
+
+$('#btn-update').onclick=async()=>{
+  if(!swReg){ location.reload(); return; }
+  try{
+    await swReg.update();
+    askSwVersion();
+    if(swReg.waiting) showUpdate();
+    else alert(`Você já está na versão mais recente publicada (v${APP_VERSION}).`);
+  }catch(e){ alert('Não foi possível verificar agora. Confira sua conexão.'); }
+};
 
 $('#btn-export').onclick=()=>
   baixar(`ferro-backup-${hoje()}.json`, JSON.stringify(db,null,2), 'application/json');
@@ -1364,12 +1403,60 @@ $('#btn-wipe').onclick=()=>{
 /* ==========================================================
    INÍCIO
    ========================================================== */
+/* ==========================================================
+   VERSÃO E ATUALIZAÇÃO
+   Ao publicar: suba APP_VERSION aqui E o V no sw.js.
+   O app pergunta ao service worker qual versão ele está servindo — se as duas
+   não baterem, você está vendo arquivo velho, e o app te avisa disso.
+   ========================================================== */
+const APP_VERSION='1.3.0';
+const APP_DATE='13/07/2026';
+let swReg=null, swVersion=null, reloading=false;
+
+function showUpdate(){ $('#update').classList.add('on'); }
+
+$('#update-go').onclick=()=>{
+  if(active && !confirm('Você está no meio de um treino. Atualizar recarrega o app e descarta a sessão. Continuar?')) return;
+  if(swReg && swReg.waiting) swReg.waiting.postMessage({type:'skip'});
+  else location.reload();
+};
+$('#update-later').onclick=()=>$('#update').classList.remove('on');
+
+function askSwVersion(){
+  const sw=navigator.serviceWorker.controller;
+  if(!sw) return;
+  const ch=new MessageChannel();
+  ch.port1.onmessage=e=>{
+    swVersion=(e.data&&e.data.v)||null;
+    if($('#v-cfg').classList.contains('on')) renderCfg();
+  };
+  sw.postMessage({type:'version'},[ch.port2]);
+}
+
+async function initSW(){
+  if(!('serviceWorker' in navigator) || !location.protocol.startsWith('http')) return;
+  try{
+    swReg=await navigator.serviceWorker.register('sw.js');
+    if(swReg.waiting) showUpdate();                    // versão nova já baixada, esperando
+    swReg.addEventListener('updatefound', ()=>{
+      const nv=swReg.installing;
+      if(!nv) return;
+      nv.addEventListener('statechange', ()=>{
+        if(nv.state==='installed' && navigator.serviceWorker.controller) showUpdate();
+      });
+    });
+    navigator.serviceWorker.addEventListener('controllerchange', ()=>{
+      if(!reloading){ reloading=true; location.reload(); }
+    });
+    askSwVersion();
+  }catch(e){}
+}
+initSW();
+
 window.addEventListener('beforeunload', e=>{
   if(active){ e.preventDefault(); e.returnValue=''; }
 });
-if('serviceWorker' in navigator && location.protocol.startsWith('http')){
-  navigator.serviceWorker.register('sw.js').catch(()=>{});
-}
+$('#ver-home').textContent=`Ferro v${APP_VERSION}`;
 renderTreinar();
 </script>
 </body>

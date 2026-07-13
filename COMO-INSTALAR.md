@@ -76,3 +76,23 @@ Três caminhos, todos salvam direto:
 
 Renomear um exercício é seguro: o histórico acompanha (o vínculo é por id, não por nome).
 Excluir só é permitido se ele nunca foi usado em treino ou rotina.
+
+## Publicar uma versão nova
+```bash
+./bump.sh 1.4.0                 # atualiza APP_VERSION (index.html) e V (sw.js) juntos
+git add -A && git commit -m "v1.4.0" && git push
+```
+O GitHub Pages republica sozinho (segundos a ~2 min; acompanhe na aba **Actions**).
+
+**Como o app sabe que tem versão nova:** o `index.html` é buscado pela **rede primeiro**,
+com o cache como rede de segurança. Quando o service worker novo termina de instalar,
+aparece a faixa azul *"Nova versão disponível"* no topo. Tocar em **Atualizar** ativa o
+worker novo e recarrega. Se você estiver no meio de um treino, ele avisa antes.
+
+**Como conferir qual versão está rodando:** o número aparece no rodapé da tela **Treinar**,
+e em **Ajustes → Versão** você vê duas linhas: a versão do app e a versão do service worker.
+Se elas divergirem, o app te avisa em amarelo — significa que o worker antigo ainda está
+servindo arquivos velhos. Toque em **Buscar atualização**.
+
+> Se você esquecer de subir o `V` do `sw.js`, o worker antigo continua ativo e você não vê
+> a faixa de atualização. É por isso que o `bump.sh` existe: ele mexe nos dois arquivos.
