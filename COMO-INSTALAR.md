@@ -18,9 +18,31 @@ Publique os arquivos no GitHub Pages e instale como app:
 Depois disso o app abre em tela cheia, com ícone próprio, e funciona sem internet
 (o service worker guarda tudo em cache na primeira visita).
 
+## Sincronizar entre PC e celular
+Não existe servidor: os dados vivem em cada aparelho. A troca é por arquivo, e a
+importação **mescla** — não substitui.
+
+- **PC → celular** (levar rotinas): Ajustes → Exportar backup no PC, importar no celular.
+- **Celular → PC** (trazer treinos): o mesmo, na direção contrária.
+
+Pode ir e vir em qualquer ordem, quantas vezes quiser. Como funciona o merge:
+- **Treinos** têm id único e são imutáveis → os dois conjuntos se somam.
+- **Rotinas e exercícios** → quem foi editado por último vence (carimbo `up`).
+- **Exclusões** viram lápide (`del`), não sumiço → apagar num aparelho não é desfeito pelo outro.
+- **Exercício igual cadastrado nos dois** → unificados, e o histórico é reapontado.
+
+Nada é perdido em nenhuma direção. Se um dia quiser sync automático por nuvem
+(Supabase e afins), o motor de merge já está pronto: só falta o transporte.
+
+## Analisar no computador
+Ajustes → **Exportar histórico (.csv)**. Uma linha por série (formato longo), com
+data, hora, treino, exercício, grupo, tipo de série, reps, carga, volume e 1RM estimado.
+Separador `;` e vírgula decimal, com BOM — abre no Excel pt-BR com dois cliques,
+pronto para tabela dinâmica. Séries de aquecimento aparecem com volume 0.
+
 ## Backup
-Ajustes → **Exportar backup (.json)**. Faça isso de vez em quando.
-Limpar os dados do navegador apaga o histórico — o backup é a sua rede de segurança.
+O `.json` é o backup completo. Faça de vez em quando: limpar os dados do navegador
+apaga o histórico. Para restaurar do zero: Apagar tudo, depois importar o arquivo.
 
 ## Alterando os arquivos
 Tudo está em `index.html`: HTML, CSS e JS num arquivo só, sem dependências externas.

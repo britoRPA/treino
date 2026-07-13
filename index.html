@@ -312,10 +312,23 @@ nav button.on{color:var(--chalk)}
       </div>
     </div>
     <div class="hr"></div>
-    <div class="eyebrow" style="margin-bottom:10px">Seus dados</div>
+    <div class="eyebrow" style="margin-bottom:10px">Sincronizar entre aparelhos</div>
+    <p class="note" style="margin:0 0 12px">
+      Exporte de um aparelho e importe no outro. A importação <b>mescla</b>: treinos novos
+      entram, rotinas editadas mais recentemente vencem, e nada do lado de cá é apagado.
+      Pode ir e vir em qualquer ordem.
+    </p>
     <button class="btn btn-ghost" id="btn-export" style="margin-bottom:8px">Exportar backup (.json)</button>
-    <button class="btn btn-ghost" id="btn-import" style="margin-bottom:8px">Restaurar backup</button>
+    <button class="btn btn-ghost" id="btn-import" style="margin-bottom:8px">Importar e mesclar (.json)</button>
     <input type="file" id="file-import" accept="application/json,.json" hidden>
+    <div class="hr"></div>
+    <div class="eyebrow" style="margin-bottom:10px">Analisar no computador</div>
+    <p class="note" style="margin:0 0 12px">
+      Uma linha por série, com data, exercício, grupo, tipo, carga, volume e 1RM estimado.
+      Abre direto no Excel — pronto para tabela dinâmica.
+    </p>
+    <button class="btn btn-ghost" id="btn-csv" style="margin-bottom:8px">Exportar histórico (.csv)</button>
+    <div class="hr"></div>
     <button class="btn btn-danger" id="btn-wipe">Apagar tudo</button>
     <p class="note" style="margin-top:14px" id="storage-note"></p>
   </div>
@@ -435,11 +448,13 @@ function catalogList(){
 
 function fresh(){
   return {
-    v:2,
-    exercises: catalogList().map((e,i)=>({id:'e'+i, name:e.name, muscle:e.muscle})),
+    v:3,
+    // ids determinísticos: duas instalações limpas geram os MESMOS ids para o
+    // mesmo catálogo, então mesclar dois aparelhos não duplica nada.
+    exercises: catalogList().map((e,i)=>({id:'e'+i, name:e.name, muscle:e.muscle, up:0})),
     routines: [],
     sessions: [],
-    cfg: {rest:90, inc:2.5}
+    cfg: {rest:90, inc:2.5, up:0}
   };
 }
 let db;
@@ -483,10 +498,84 @@ function migrate(){
 }
 migrate();
 
+/* ==========================================================
+   MIGRAÇÃO v2 → v3  ·  SINCRONIZAÇÃO
+   Para mesclar dois aparelhos sem perder nada, cada registro precisa de:
+     up  — quando foi alterado pela última vez (quem editou por último vence)
+     del — lápide: excluído NÃO é sumir do array, é marcar.
+   Sem lápide, apagar um treino no celular e mesclar faz o PC ressuscitá-lo.
+   ========================================================== */
+function migrate3(){
+  if(db.v>=3) return;
+  const t=Date.now();
+  for(const c of ['exercises','routines','sessions'])
+    for(const r of (db[c]||[])) if(r.up==null) r.up = (c==='sessions' ? (r.date||t) : t);
+  if(db.cfg.up==null) db.cfg.up=t;
+  db.v=3; save();
+}
+migrate3();
+
+const touch=r=>{ r.up=Date.now(); return r; };
+// coleções vivas — tudo que não foi marcado como excluído
+const EX  =()=>db.exercises.filter(e=>!e.del);
+const ROUT=()=>db.routines.filter(r=>!r.del);
+const SESS=()=>db.sessions.filter(s=>!s.del);
+// exOf resolve QUALQUER exercício, inclusive excluído: um treino antigo
+// ainda precisa saber o nome do exercício que ele registrou.
 const gidx=m=>{ const i=GROUPS.indexOf(m); return i<0 ? 98 : i; };
 const byGroup=(a,b)=>gidx(a.muscle)-gidx(b.muscle) || a.name.localeCompare(b.name,'pt-BR');
-const exUsed=id=>db.sessions.some(s=>s.entries.some(e=>e.exerciseId===id))
-              || db.routines.some(r=>r.items.some(i=>i.exerciseId===id));
+const exUsed=id=>SESS().some(s=>s.entries.some(e=>e.exerciseId===id))
+              || ROUT().some(r=>r.items.some(i=>i.exerciseId===id));
+
+/* Traz um backup de qualquer versão para o formato atual, sem tocar no banco local. */
+function upgradeBlob(o){
+  const t=Date.now();
+  for(const c of ['exercises','routines','sessions'])
+    for(const r of (o[c]||[])) if(r.up==null) r.up = (c==='sessions' ? (r.date||t) : t);
+  if(o.cfg && o.cfg.up==null) o.cfg.up=0;
+  for(const e of (o.exercises||[]))
+    if(!GROUPS.includes(e.muscle)) e.muscle = OLDMAP[e.muscle] || 'Outros';
+  return o;
+}
+
+/* MERGE — o motor. Sessões são imutáveis e têm id único, então a união é
+   trivial. Rotinas e exercícios são poucos: quem tem `up` maior vence. */
+function mergeDb(inc){
+  upgradeBlob(inc);
+  const add={exercises:0, routines:0, sessions:0}, upd={exercises:0, routines:0, sessions:0};
+  for(const c of ['exercises','routines','sessions']){
+    const mine=new Map(db[c].map(r=>[r.id,r]));
+    for(const r of (inc[c]||[])){
+      const cur=mine.get(r.id);
+      if(!cur){ db[c].push(r); add[c]++; }
+      else if((r.up||0) > (cur.up||0)){
+        for(const k of Object.keys(cur)) delete cur[k];
+        Object.assign(cur, r); upd[c]++;
+      }
+    }
+  }
+  if(inc.cfg && (inc.cfg.up||0) > (db.cfg.up||0)) db.cfg=inc.cfg;
+  const dedup=dedupeExercises();
+  save();
+  return {add, upd, dedup};
+}
+
+/* Mesmo exercício cadastrado à mão nos dois aparelhos = dois ids diferentes.
+   Mantém o mais antigo e reaponta o histórico para ele. */
+function dedupeExercises(){
+  const seen=new Map(), remap=new Map();
+  for(const e of db.exercises.filter(x=>!x.del).sort((a,b)=>(a.up||0)-(b.up||0))){
+    const k=norm(e.name);
+    if(seen.has(k)){ remap.set(e.id, seen.get(k).id); e.del=true; e.up=Date.now(); }
+    else seen.set(k, e);
+  }
+  if(!remap.size) return 0;
+  for(const s of db.sessions) for(const en of s.entries)
+    if(remap.has(en.exerciseId)) en.exerciseId=remap.get(en.exerciseId);
+  for(const r of db.routines) for(const i of r.items)
+    if(remap.has(i.exerciseId)) i.exerciseId=remap.get(i.exerciseId);
+  return remap.size;
+}
 
 /* Tipos de série. Padrão do mercado (Hevy, Strong): normal, aquecimento,
    falha e drop set. O tipo não é só rótulo — ele muda o cálculo:
@@ -517,7 +606,7 @@ const totalSets=s=>s.entries.reduce((a,e)=>a+e.sets.filter(isWork).length,0);
 const warmSets=s=>s.entries.reduce((a,e)=>a+e.sets.filter(t=>typeOf(t)==='w'&&t.reps>0).length,0);
 
 // sessões que contêm o exercício, mais recentes primeiro
-const historyOf=exId=>db.sessions
+const historyOf=exId=>SESS()
   .filter(s=>allSets(s,exId).length)
   .sort((a,b)=>b.date-a.date);
 
@@ -529,7 +618,7 @@ function lastPerf(exId, exceptId){
 // melhor e1RM histórico, ignorando aquecimento
 function bestE1rm(exId, exceptId){
   let best=0;
-  for(const s of db.sessions){
+  for(const s of SESS()){
     if(s.id===exceptId) continue;
     for(const t of workSets(s,exId)) best=Math.max(best, e1rm(t.weight,t.reps));
   }
@@ -537,7 +626,7 @@ function bestE1rm(exId, exceptId){
 }
 function bestWeight(exId){
   let best=0;
-  for(const s of db.sessions) for(const t of workSets(s,exId)) best=Math.max(best,t.weight);
+  for(const s of SESS()) for(const t of workSets(s,exId)) best=Math.max(best,t.weight);
   return best;
 }
 // rótulo de uma série no histórico: "8×60" ou "W 12×20"
@@ -607,19 +696,20 @@ function typeMenu(current, cb){
    TREINAR
    ========================================================== */
 function renderTreinar(){
-  const n=db.sessions.length;
+  const n=SESS().length;
   $('#greet').textContent = n ? 'Bora treinar' : 'Comece por aqui';
   $('#streak').textContent = n ? `${n} treino${n>1?'s':''}` : '';
 
   const c=$('#routines');
-  if(!db.routines.length){
+  const rots=ROUT();
+  if(!rots.length){
     c.innerHTML=`<div class="empty">
       <h2>Nenhuma rotina ainda</h2>
       <p>Crie um Treino A, B, C — depois é só abrir e ajustar o que precisar no dia.</p>
     </div>`;
     return;
   }
-  c.innerHTML=db.routines.map(r=>{
+  c.innerHTML=rots.map(r=>{
     const names=r.items.map(i=>exOf(i.exerciseId)?.name).filter(Boolean);
     return `<div class="card">
       <div class="card-row" style="margin-bottom:6px">
@@ -642,7 +732,7 @@ $('#btn-new-routine').onclick=()=>editRoutine(null);
 /* ---------- editor de rotina ---------- */
 let draft=null;
 function editRoutine(id){
-  const r=db.routines.find(x=>x.id===id);
+  const r=ROUT().find(x=>x.id===id);
   draft = r ? JSON.parse(JSON.stringify(r)) : {id:uid(), name:'', items:[]};
   drawRoutine(!!r);
 }
@@ -675,11 +765,14 @@ function drawRoutine(isEdit){
   const del=$('#r-del');
   if(del) del.onclick=()=>{
     if(!confirm('Excluir esta rotina? Seus treinos já registrados continuam no histórico.')) return;
-    db.routines=db.routines.filter(x=>x.id!==draft.id); save(); closeSheet(); renderTreinar();
+    const alvo=db.routines.find(x=>x.id===draft.id);
+    if(alvo){ alvo.del=true; touch(alvo); }        // lápide: mesclar não ressuscita
+    save(); closeSheet(); renderTreinar();
   };
   $('#r-save').onclick=()=>{
     if(!draft.name.trim()) draft.name='Rotina';
     if(!draft.items.length){ alert('Adicione ao menos um exercício.'); return; }
+    touch(draft);
     const i=db.routines.findIndex(x=>x.id===draft.id);
     if(i>=0) db.routines[i]=draft; else db.routines.push(draft);
     save(); closeSheet(); renderTreinar();
@@ -693,7 +786,7 @@ function pickExercise(cb){
         bT=$('#sheet-title').textContent, bF=$('#sheet-foot').innerHTML,
         wasFoot=$('#sheet-foot').classList.contains('on');
   const draw=(q='')=>{
-    const list=db.exercises
+    const list=EX()
       .filter(e=>norm(e.name).includes(norm(q))||norm(e.muscle).includes(norm(q)))
       .sort(byGroup);
     let html=`<input id="p-q" placeholder="Buscar" value="${esc(q)}" style="width:100%;margin-bottom:10px">`;
@@ -737,7 +830,7 @@ function pickExercise(cb){
 let active=null, tick=null;
 
 function startSession(routineId){
-  const r=db.routines.find(x=>x.id===routineId);
+  const r=ROUT().find(x=>x.id===routineId);
   active={
     id:uid(), date:Date.now(), routineId:routineId||null,
     name: r ? r.name : 'Treino livre',
@@ -925,7 +1018,7 @@ function finishSession(){
     durationSec: Math.floor((Date.now()-active.date)/1000),
     entries: done, prs: prs.map(p=>p.name)
   };
-  db.sessions.push(s); save();
+  db.sessions.push(touch(s)); save();
   active=null; stopSessionClock();
 
   const vol=volume(s);
@@ -971,7 +1064,7 @@ $('#rest-plus').onclick=()=>{ restLeft+=30; paintRest(); };
    HISTÓRICO
    ========================================================== */
 function renderHist(){
-  const ss=[...db.sessions].sort((a,b)=>b.date-a.date);
+  const ss=[...SESS()].sort((a,b)=>b.date-a.date);
   const week=ss.filter(s=>Date.now()-s.date < 7*864e5).length;
   const vol=ss.reduce((a,s)=>a+volume(s),0);
   $('#hist-stats').innerHTML=`
@@ -1001,7 +1094,7 @@ function renderHist(){
 }
 
 function showSession(id){
-  const s=db.sessions.find(x=>x.id===id);
+  const s=SESS().find(x=>x.id===id);
   const body=s.entries.map(en=>`
     <div class="ex">
       <div class="card-row" style="margin-bottom:8px">
@@ -1024,7 +1117,9 @@ function showSession(id){
      <button class="btn btn-danger" id="h-del" style="margin-top:20px">Excluir treino</button>`);
   $('#h-del').onclick=()=>{
     if(!confirm('Excluir este treino do histórico?')) return;
-    db.sessions=db.sessions.filter(x=>x.id!==id); save(); closeSheet(); renderHist();
+    const alvo=db.sessions.find(x=>x.id===id);
+    if(alvo){ alvo.del=true; touch(alvo); }
+    save(); closeSheet(); renderHist();
   };
 }
 
@@ -1033,7 +1128,7 @@ function showSession(id){
    ========================================================== */
 function renderEx(){
   const q=norm($('#ex-search').value);
-  const list=db.exercises
+  const list=EX()
     .filter(e=>norm(e.name).includes(q)||norm(e.muscle).includes(q))
     .sort(byGroup);
   let html='', m='';
@@ -1090,16 +1185,16 @@ function editExercise(id, prefill, onDone, onCancel){
     const del=$('#x-del');
     if(del) del.onclick=()=>{
       if(!confirm(`Excluir "${ex.name}" do catálogo?`)) return;
-      db.exercises=db.exercises.filter(e=>e.id!==ex.id); save(); closeSheet(); renderEx();
+      ex.del=true; touch(ex); save(); closeSheet(); renderEx();
     };
     $('#x-save').onclick=()=>{
       const nm=name.trim();
       if(!nm){ $('#x-name').focus(); return; }
-      const clash=db.exercises.find(e=>norm(e.name)===norm(nm) && e.id!==(ex?ex.id:null));
+      const clash=EX().find(e=>norm(e.name)===norm(nm) && e.id!==(ex?ex.id:null));
       if(clash){ alert(`Já existe "${clash.name}" em ${clash.muscle}.`); return; }
-      if(ex){ ex.name=nm; ex.muscle=muscle; save(); done(ex.id); }
+      if(ex){ ex.name=nm; ex.muscle=muscle; touch(ex); save(); done(ex.id); }
       else {
-        const novo={id:uid(), name:nm, muscle};
+        const novo=touch({id:uid(), name:nm, muscle});
         db.exercises.push(novo); save(); done(novo.id);
       }
     };
@@ -1179,25 +1274,83 @@ function renderCfg(){
 $$('.rest-opt').forEach(b=>b.onclick=()=>{ db.cfg.rest=+b.dataset.s; save(); renderCfg(); });
 $$('.inc-opt').forEach(b=>b.onclick=()=>{ db.cfg.inc=+b.dataset.i; save(); renderCfg(); });
 
-$('#btn-export').onclick=()=>{
-  const blob=new Blob([JSON.stringify(db,null,2)],{type:'application/json'});
+/* ---------- backup JSON: exporta tudo, inclusive lápides ---------- */
+function baixar(nome, texto, mime){
+  const blob=new Blob([texto],{type:mime});
   const a=document.createElement('a');
-  a.href=URL.createObjectURL(blob);
-  a.download=`ferro-backup-${new Date().toISOString().slice(0,10)}.json`;
-  a.click(); URL.revokeObjectURL(a.href);
-};
+  a.href=URL.createObjectURL(blob); a.download=nome; a.click();
+  URL.revokeObjectURL(a.href);
+}
+const hoje=()=>new Date().toISOString().slice(0,10);
+
+$('#btn-export').onclick=()=>
+  baixar(`ferro-backup-${hoje()}.json`, JSON.stringify(db,null,2), 'application/json');
+
+/* ---------- CSV: uma linha por SÉRIE (formato longo) ----------
+   Formato longo é o que tabela dinâmica, pandas e Power BI querem.
+   Separador ";" e vírgula decimal: abre no Excel pt-BR com dois cliques.
+   BOM no início para os acentos não virarem lixo. */
+function exportarCsv(){
+  const dec=n=>(Math.round(n*100)/100).toString().replace('.',',');
+  const q=v=>`"${String(v).replace(/"/g,'""')}"`;
+  const cols=['data','hora','treino','duracao_min','exercicio','grupo','serie','tipo',
+              'reps','carga_kg','volume_kg','e1rm_kg','recorde'];
+  const linhas=[cols.join(';')];
+
+  for(const s of [...SESS()].sort((a,b)=>a.date-b.date)){
+    const d=new Date(s.date);
+    const data=d.toLocaleDateString('pt-BR');
+    const hora=d.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
+    for(const en of s.entries){
+      const e=exOf(en.exerciseId);
+      const pr=(s.prs||[]).includes(e?e.name:'') ? 'Sim' : 'Não';
+      let n=0;
+      for(const t of en.sets){
+        const ty=typeOf(t);
+        if(ty!=='w') n++;
+        linhas.push([
+          data, hora, q(s.name), Math.round(s.durationSec/60),
+          q(e?e.name:'?'), q(e?e.muscle:'?'),
+          ty==='w' ? '' : n,                       // aquecimento não recebe número
+          q(TYPES[ty].t),
+          t.reps, dec(t.weight),
+          ty==='w' ? '0' : dec(t.reps*t.weight),   // aquecimento não soma volume
+          dec(e1rm(t.weight,t.reps)),
+          pr
+        ].join(';'));
+      }
+    }
+  }
+  if(linhas.length===1){ alert('Nenhum treino registrado ainda.'); return; }
+  baixar(`ferro-treinos-${hoje()}.csv`, '\uFEFF'+linhas.join('\r\n'), 'text/csv;charset=utf-8');
+}
+$('#btn-csv').onclick=exportarCsv;
+
+/* ---------- importar = MESCLAR ----------
+   Substituir o banco era um footgun: importar a rotina do PC apagava os
+   treinos do celular, e vice-versa. Agora os dois lados sobrevivem. */
 $('#btn-import').onclick=()=>$('#file-import').click();
 $('#file-import').onchange=ev=>{
   const f=ev.target.files[0]; if(!f) return;
   const r=new FileReader();
   r.onload=()=>{
+    let inc;
     try{
-      const d=JSON.parse(r.result);
-      if(!d.exercises||!d.sessions) throw 0;
-      if(!confirm('Restaurar este backup? Os dados atuais serão substituídos.')) return;
-      db=d; if(!db.cfg) db.cfg={rest:90,inc:2.5};
-      save(); go('treinar');
-    }catch(e){ alert('Arquivo inválido. Use um backup exportado pelo próprio app.'); }
+      inc=JSON.parse(r.result);
+      if(!inc.exercises || !inc.sessions) throw 0;
+    }catch(e){
+      alert('Arquivo inválido. Use um backup exportado pelo próprio app.'); return;
+    }
+    const {add, upd, dedup}=mergeDb(inc);
+    const partes=[];
+    if(add.sessions)  partes.push(`${add.sessions} treino${add.sessions>1?'s':''} novo${add.sessions>1?'s':''}`);
+    if(add.routines)  partes.push(`${add.routines} rotina${add.routines>1?'s':''} nova${add.routines>1?'s':''}`);
+    if(add.exercises) partes.push(`${add.exercises} exercício${add.exercises>1?'s':''} novo${add.exercises>1?'s':''}`);
+    const at=upd.sessions+upd.routines+upd.exercises;
+    if(at) partes.push(`${at} registro${at>1?'s':''} atualizado${at>1?'s':''}`);
+    if(dedup) partes.push(`${dedup} exercício${dedup>1?'s':''} duplicado${dedup>1?'s':''} unificado${dedup>1?'s':''}`);
+    alert(partes.length ? 'Mesclado: '+partes.join(', ')+'.' : 'Nada novo — os dois já estavam iguais.');
+    go('treinar');
   };
   r.readAsText(f);
   ev.target.value='';
