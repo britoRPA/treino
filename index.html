@@ -1169,7 +1169,7 @@ function finishSession(){
     `<div class="stats" style="margin-top:8px">
       <div class="stat"><span class="num">${clock(s.durationSec)}</span><span class="eyebrow">Duração</span></div>
       <div class="stat"><span class="num">${totalSets(s)}</span><span class="eyebrow">Séries</span></div>
-      <div class="stat"><span class="num">${Math.round(vol)}</span><span class="eyebrow">Volume kg</span></div>
+      <div class="stat"><span class="num">${Math.round(vol).toLocaleString('pt-BR')}</span><span class="eyebrow">Volume kg</span></div>
      </div>
      ${warmSets(s)?`<p class="note" style="margin:-4px 0 0">
         + ${warmSets(s)} série${warmSets(s)>1?'s':''} de aquecimento, fora da conta de volume.</p>`:''}
@@ -1221,7 +1221,7 @@ function renderHist(){
   $('#hist-stats').innerHTML=`
     <div class="stat"><span class="num">${ss.length}</span><span class="eyebrow">Treinos</span></div>
     <div class="stat"><span class="num">${week}</span><span class="eyebrow">Últ. 7 dias</span></div>
-    <div class="stat"><span class="num">${(vol/1000).toFixed(1).replace('.',',')}t</span><span class="eyebrow">Volume total</span></div>`;
+    <div class="stat"><span class="num">${Math.round(vol).toLocaleString('pt-BR')}</span><span class="eyebrow">Volume total kg</span></div>`;
 
   const c=$('#sessions');
   if(!ss.length){
@@ -1282,7 +1282,7 @@ function showSession(id){
     `<div class="stats">
       <div class="stat"><span class="num">${clock(s.durationSec)}</span><span class="eyebrow">Duração</span></div>
       <div class="stat"><span class="num">${totalSets(s)}</span><span class="eyebrow">Séries</span></div>
-      <div class="stat"><span class="num">${Math.round(volume(s))}</span><span class="eyebrow">Volume kg</span></div>
+      <div class="stat"><span class="num">${Math.round(volume(s)).toLocaleString('pt-BR')}</span><span class="eyebrow">Volume kg</span></div>
      </div>${body}
      <button class="btn btn-danger" id="h-del" style="margin-top:20px">Excluir treino</button>`);
   $('#h-del').onclick=()=>{
@@ -1568,7 +1568,7 @@ $('#btn-wipe').onclick=()=>{
    O app pergunta ao service worker qual versão ele está servindo — se as duas
    não baterem, você está vendo arquivo velho, e o app te avisa disso.
    ========================================================== */
-const APP_VERSION='1.6.0';
+const APP_VERSION='1.6.1';
 const APP_DATE='16/07/2026';
 let swReg=null, swVersion=null, reloading=false;
 
