@@ -278,6 +278,7 @@ nav button.on{color:var(--chalk)}
     <div class="num" id="streak" style="color:var(--dim);font-size:13px"></div>
   </div>
   <div class="wrap">
+    <div id="resume" style="display:none;margin-bottom:12px"></div>
     <button class="btn btn-primary" id="btn-empty-session">Iniciar treino vazio</button>
     <div class="hr"></div>
     <div class="card-row" style="margin-bottom:10px">
@@ -318,6 +319,12 @@ nav button.on{color:var(--chalk)}
     <div><div class="eyebrow">Ajustes</div><h1>Configuração</h1></div>
   </div>
   <div class="wrap">
+    <div class="card" id="install-tip" style="display:none;border-color:var(--blue)">
+      <div class="eyebrow" style="margin-bottom:8px;color:var(--blue)">Melhor experiência</div>
+      <p class="note" style="margin:0">Para tela cheia de verdade e o botão voltar funcionando como app,
+      instale o Ferro: no menu do Chrome (⋮), toque em <b>Adicionar à tela inicial</b>.
+      Aberto pela tela inicial, ele roda sem as barras do navegador.</p>
+    </div>
     <div class="card">
       <div class="eyebrow" style="margin-bottom:8px">Descanso padrão</div>
       <div class="row">
@@ -717,6 +724,7 @@ $$('nav button').forEach(b=>b.onclick=()=>go(b.dataset.v));
    ========================================================== */
 let onClose=null;
 function sheet(eyebrow,title,html,foot,opts){
+  const jaAberta=$('#sheet').classList.contains('on');
   $('#sheet-eyebrow').textContent=eyebrow;
   $('#sheet-title').textContent=title;
   $('#sheet-body').innerHTML=html;
@@ -724,6 +732,9 @@ function sheet(eyebrow,title,html,foot,opts){
   if(foot){ $('#sheet-foot').innerHTML=foot; $('#sheet-foot').classList.add('on'); }
   else { $('#sheet-foot').classList.remove('on'); }
   document.body.style.overflow='hidden';
+  // ao ABRIR uma tela cheia (não em redesenhos), cria um degrau no histórico
+  // para o botão voltar do Android fechar a tela em vez de sair do app
+  if(!jaAberta && typeof pushGuard==='function') pushGuard();
   // reabrir uma tela do zero volta ao topo; redesenhar a MESMA tela (ex.: marcar
   // uma série) preserva onde você estava — senão, no último exercício, cada toque
   // te chuta lá pra cima e você tem que rolar de volta.
@@ -737,9 +748,10 @@ function closeSheet(){
   const f=onClose; onClose=null; if(f) f();
 }
 $('#sheet-close').onclick=()=>{
-  if(active && !confirm('Sair sem concluir? O treino será descartado.')) return;
-  if(active){ active=null; stopSessionClock(); }
+  // fechar NÃO descarta o treino — ele continua ativo e você volta pelo banner.
+  // (descartar de vez é o botão vermelho dentro da própria sessão)
   closeSheet();
+  if(active) renderTreinar();   // mostra o banner "retomar treino"
 };
 
 /* ==========================================================
@@ -769,6 +781,19 @@ function renderTreinar(){
   const n=SESS().length;
   $('#greet').textContent = n ? 'Bora treinar' : 'Comece por aqui';
   $('#streak').textContent = n ? `${n} treino${n>1?'s':''}` : '';
+
+  // treino em andamento: banner de retomar no topo
+  const rc=$('#resume');
+  if(active){
+    const feitas=active.entries.reduce((a,e)=>a+e.sets.filter(t=>t.done).length,0);
+    rc.innerHTML=`<button class="btn btn-primary" id="resume-go" style="width:100%">
+        ▶ Retomar treino — ${esc(active.name)}${feitas?` (${feitas} série${feitas>1?'s':''})`:''}
+      </button>`;
+    rc.style.display='block';
+    $('#resume-go').onclick=()=>openSession();
+  } else {
+    rc.innerHTML=''; rc.style.display='none';
+  }
 
   const c=$('#routines');
   const rots=ROUT();
@@ -898,15 +923,37 @@ function pickExercise(cb){
    SESSÃO ATIVA
    ========================================================== */
 let active=null, tick=null;
+const LIVE_KEY='ferro:v1:live';   // treino em andamento, separado do banco
+
+// grava a sessão ativa a cada mudança — é o que sobrevive a fechar/reiniciar o app
+function persistActive(){
+  try{
+    if(active) LS.set(LIVE_KEY, JSON.stringify(active));
+    else LS.set(LIVE_KEY, '');
+  }catch(e){}
+}
+function loadActive(){
+  try{ const raw=LS.get(LIVE_KEY); return raw ? JSON.parse(raw) : null; }
+  catch(e){ return null; }
+}
+function clearActive(){ active=null; stopSessionClock(); persistActive(); }
 
 function startSession(routineId){
+  if(active && !confirm('Você já tem um treino em andamento. Iniciar um novo vai descartar o atual. Continuar?')) return;
   const r=ROUT().find(x=>x.id===routineId);
   active={
     id:uid(), date:Date.now(), routineId:routineId||null,
     name: r ? r.name : 'Treino livre',
     entries: r ? r.items.map(i=>({exerciseId:i.exerciseId, sets:seedSets(i.exerciseId)})) : []
   };
+  persistActive();
+  openSession();
+}
+
+// abre a tela do treino ativo (usado ao iniciar E ao retomar)
+function openSession(){
   drawSession();
+  clearInterval(tick);
   tick=setInterval(()=>{
     if(!active) return;
     $('#sheet-clock').textContent=clock(Math.floor((Date.now()-active.date)/1000));
@@ -983,12 +1030,15 @@ function drawSession(){
   const pos=wasOpen ? $('#sheet').scrollTop : 0;
 
   sheet('Em andamento', active.name,
-    empty + html + `<button class="btn btn-ghost" id="s-add" style="margin-top:4px">+ Adicionar exercício</button>`,
+    empty + html
+      + `<button class="btn btn-ghost" id="s-add" style="margin-top:4px">+ Adicionar exercício</button>`
+      + `<button class="btn btn-danger" id="s-discard" style="margin-top:24px">Descartar treino</button>`,
     `<button class="btn btn-primary" id="s-finish">Concluir treino</button>`,
     {keepScroll:true});
   $('#sheet').scrollTop=pos;
 
   bindSession();
+  persistActive();
 }
 
 // aviso de PR: some sozinho, nunca trava o dedo no meio do treino
@@ -1012,7 +1062,7 @@ function bindSession(){
   body.querySelectorAll('.set').forEach(row=>{
     const ei=+row.dataset.e, si=+row.dataset.s, en=active.entries[ei], t=en.sets[si];
     row.querySelectorAll('input').forEach(inp=>{
-      inp.oninput=()=>{ t[inp.dataset.f]=parseFloat(inp.value.replace(',','.'))||0; };
+      inp.oninput=()=>{ t[inp.dataset.f]=parseFloat(inp.value.replace(',','.'))||0; persistActive(); };
       // toca no campo = valor inteiro selecionado, pronto para sobrescrever
       // (senão é apagar dígito por dígito antes de digitar o novo número)
       inp.onfocus=()=>{ try{ inp.select(); }catch(e){} };
@@ -1025,11 +1075,11 @@ function bindSession(){
         if(a==='r+'||a==='r-'){
           let base = t.reps || t.gr || 0;
           t.reps=Math.max(0, base + (a==='r+'?1:-1));
-          ri.value=t.reps||'';
+          ri.value=t.reps||''; persistActive();
         } else if(a==='w+'||a==='w-'){
           let base = t.weight || t.gw || 0;
           t.weight=Math.max(0, Math.round((base + (a==='w+'?inc:-inc))*100)/100);
-          wi.value=t.weight||'';
+          wi.value=t.weight||''; persistActive();
         } else if(a==='type'){
           typeMenu(typeOf(t), ty=>{
             t.type=ty;
@@ -1074,6 +1124,7 @@ function bindSession(){
             t.done=false; row.classList.remove('done');
             if(t.volPr){ t.volPr=false; if(check) check.textContent='✓'; }
           }
+          persistActive();
         }
       };
     });
@@ -1107,6 +1158,13 @@ function bindSession(){
     drawSession();
   });
   $('#s-finish').onclick=finishSession;
+  const disc=$('#s-discard');
+  if(disc) disc.onclick=()=>{
+    if(!confirm('Descartar este treino? Tudo que você registrou nele será perdido.')) return;
+    clearActive();
+    closeSheet();
+    go('treinar');
+  };
 }
 
 function finishSession(){
@@ -1153,7 +1211,7 @@ function finishSession(){
     entries: done, prs: prs.map(p=>p.name)
   };
   db.sessions.push(touch(s)); save();
-  active=null; stopSessionClock();
+  active=null; stopSessionClock(); persistActive();
 
   // PR de volume: um por exercício — o último (=maior) alcançado na sessão,
   // evitando repetir o mesmo exercício várias vezes quando PRs saem em série
@@ -1442,6 +1500,11 @@ function sparkline(pts){
    AJUSTES
    ========================================================== */
 function renderCfg(){
+  // detecta se está rodando instalado (standalone/fullscreen) — se não, mostra a dica
+  const instalado = window.matchMedia('(display-mode: standalone)').matches
+                 || window.matchMedia('(display-mode: fullscreen)').matches
+                 || window.navigator.standalone===true;
+  $('#install-tip').style.display = instalado ? 'none' : 'block';
   $$('.rest-opt').forEach(b=>b.style.borderColor = (+b.dataset.s===db.cfg.rest)?'var(--blue)':'var(--line)');
   $$('.rest-opt').forEach(b=>b.style.color = (+b.dataset.s===db.cfg.rest)?'var(--blue)':'var(--chalk)');
   $$('.inc-opt').forEach(b=>b.style.borderColor = (+b.dataset.i===db.cfg.inc)?'var(--blue)':'var(--line)');
@@ -1568,7 +1631,7 @@ $('#btn-wipe').onclick=()=>{
    O app pergunta ao service worker qual versão ele está servindo — se as duas
    não baterem, você está vendo arquivo velho, e o app te avisa disso.
    ========================================================== */
-const APP_VERSION='1.6.1';
+const APP_VERSION='1.7.0';
 const APP_DATE='16/07/2026';
 let swReg=null, swVersion=null, reloading=false;
 
@@ -1612,9 +1675,43 @@ async function initSW(){
 }
 initSW();
 
-window.addEventListener('beforeunload', e=>{
-  if(active){ e.preventDefault(); e.returnValue=''; }
+/* ==========================================================
+   BOTÃO VOLTAR (Android) + RESTAURAR TREINO
+   O voltar do Android dispara 'popstate'. Empurramos um estado no
+   histórico ao abrir uma tela cheia; assim o voltar FECHA a tela em vez
+   de sair do app. O treino em andamento nunca é descartado por isso —
+   ele fica salvo e acessível pelo banner "Retomar".
+   ========================================================== */
+let backGuard=false;
+// mantém sempre um "degrau" extra no histórico para o voltar ter o que consumir
+function pushGuard(){ history.pushState({ferro:true}, ''); }
+
+window.addEventListener('popstate', ()=>{
+  // 1) menu de tipo aberto → fecha ele
+  if($('#menu').classList.contains('on')){ $('#menu').classList.remove('on'); pushGuard(); return; }
+  // 2) tela cheia aberta → fecha (treino continua ativo e salvo)
+  if($('#sheet').classList.contains('on')){
+    closeSheet();
+    if(active) renderTreinar();
+    pushGuard();
+    return;
+  }
+  // 3) nada aberto → deixa o voltar sair do app naturalmente na próxima vez,
+  //    mas re-arma o degrau uma vez para evitar saída acidental no primeiro toque
+  if(!backGuard){ backGuard=true; pushGuard(); }
 });
+pushGuard();
+
+// restaura treino em andamento salvo de uma sessão anterior do app
+(function restoreActive(){
+  const saved=loadActive();
+  if(!saved || !saved.entries) return;
+  active=saved;
+  const feitas=active.entries.reduce((a,e)=>a+e.sets.filter(t=>t.done).length,0);
+  // não abre sozinho no meio da tela — oferece pelo banner, respeitando o usuário
+  renderTreinar();
+})();
+
 $('#ver-home').textContent=`Ferro v${APP_VERSION}`;
 renderTreinar();
 </script>
