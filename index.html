@@ -664,6 +664,19 @@ function bestE1rm(exId, exceptId){
   }
   return best;
 }
+// como bestE1rm, mas devolve também a série e a data que geraram o recorde,
+// para mostrar o cálculo (não só o número)
+function bestE1rmSet(exId, exceptId){
+  let best=0, set=null, date=null;
+  for(const s of SESS()){
+    if(s.id===exceptId) continue;
+    for(const t of workSets(s,exId)){
+      const v=e1rm(t.weight,t.reps);
+      if(v>best){ best=v; set={reps:t.reps, weight:t.weight}; date=s.date; }
+    }
+  }
+  return best>0 ? {e1:best, set, date} : null;
+}
 function bestWeight(exId){
   let best=0;
   for(const s of SESS()) for(const t of workSets(s,exId)) best=Math.max(best,t.weight);
@@ -913,11 +926,12 @@ function seedSets(exId){
 function drawSession(){
   const html=active.entries.map((en,ei)=>{
     const e=exOf(en.exerciseId);
-    const last=lastPerf(en.exerciseId, active.id);
-    const lastWork = last ? last.filter(t=>typeOf(t)!=='w') : [];
-    const lastTxt = lastWork.length
-      ? 'Última vez: ' + lastWork.map(setLabel).join('  ')
-      : (last && last.length ? 'Última vez: só aquecimento' : 'Primeira vez com este exercício');
+    // em vez de despejar todas as séries anteriores (poluído), mostra o melhor
+    // 1RM histórico — a informação acionável no momento do treino
+    const rec=bestE1rmSet(en.exerciseId, active.id);
+    const lastTxt = rec
+      ? `Recorde 1RM: ${kg(rec.e1)} kg (${rec.set.reps}×${kg(rec.set.weight)})`
+      : 'Primeira vez com este exercício';
     let wn=0;   // numeração conta só as séries de trabalho
     const rows=en.sets.map((t,si)=>{
       const ty=typeOf(t);
@@ -989,7 +1003,7 @@ function showPrToast(name, cur, prev){
     <span class="sub">${prevTxt}</span>`;
   el.classList.add('on');
   clearTimeout(el._h);
-  el._h=setTimeout(()=>el.classList.remove('on'), 4200);
+  el._h=setTimeout(()=>el.classList.remove('on'), 7000);
 }
 
 function bindSession(){
@@ -1141,10 +1155,14 @@ function finishSession(){
   db.sessions.push(touch(s)); save();
   active=null; stopSessionClock();
 
-  // PR de volume: coletados série a série durante o treino (t.volPr), aqui só listados
-  const volPrs=[];
-  for(const en of done) for(const t of en.sets) if(t.volPr)
-    volPrs.push({name:exOf(en.exerciseId)?.name, set:t});
+  // PR de volume: um por exercício — o último (=maior) alcançado na sessão,
+  // evitando repetir o mesmo exercício várias vezes quando PRs saem em série
+  const volMap=new Map();
+  for(const en of done){
+    const nm=exOf(en.exerciseId)?.name;
+    for(const t of en.sets) if(t.volPr) volMap.set(nm, {name:nm, set:t});
+  }
+  const volPrs=[...volMap.values()];
 
   const vol=volume(s);
   sheet('Concluído', s.name,
@@ -1236,7 +1254,6 @@ function showSession(id){
       const v=e1rm(t.weight,t.reps);
       if(v>top){ top=v; bestSet=t; }
     }
-    const isPr = s.prs && s.prs.includes(exOf(en.exerciseId)?.name);
     return `
     <div class="ex">
       <div class="card-row" style="margin-bottom:8px">
@@ -1245,16 +1262,20 @@ function showSession(id){
       ${top>0?`<div class="ex-last" style="display:flex;align-items:center;gap:8px">
         1RM estimado: <b class="num">${kg(top)} kg</b>
         <span class="meta">(${bestSet.reps}×${kg(bestSet.weight)})</span>
-        ${isPr?`<span class="tag tag-pr">PR</span>`:''}
       </div>`:''}
-      ${(()=>{ let n=0; return en.sets.map(t=>{
+      ${(()=>{
+        // só o ÚLTIMO PR de volume do exercício nesta sessão leva o troféu —
+        // senão uma primeira sessão fica coberta de 🏆 (tudo era PR por falta de histórico)
+        let lastPrIdx=-1;
+        en.sets.forEach((t,i)=>{ if(t.volPr) lastPrIdx=i; });
+        let n=0; return en.sets.map((t,i)=>{
         const ty=typeOf(t); if(ty!=='w') n++;
         return `<div class="card-row ${ty==='w'?'warm':''}" style="padding:6px 0;border-top:1px solid var(--line)">
           <span style="display:flex;align-items:center;gap:10px">
             <span class="set-n ${ty!=='n'?'tagged':''}" style="height:auto;padding:2px 0">${ty==='n'?n:TYPES[ty].k}</span>
             <span class="num">${t.reps} × ${kg(t.weight)} kg</span>
           </span>
-          ${t.volPr?`<span class="tag tag-pr">🏆 PR</span>`:''}
+          ${i===lastPrIdx?`<span class="tag tag-pr">🏆 PR</span>`:''}
         </div>`; }).join(''); })()}
     </div>`; }).join('');
   sheet(dayFull(s.date), s.name,
@@ -1547,7 +1568,7 @@ $('#btn-wipe').onclick=()=>{
    O app pergunta ao service worker qual versão ele está servindo — se as duas
    não baterem, você está vendo arquivo velho, e o app te avisa disso.
    ========================================================== */
-const APP_VERSION='1.5.0';
+const APP_VERSION='1.6.0';
 const APP_DATE='16/07/2026';
 let swReg=null, swVersion=null, reloading=false;
 
