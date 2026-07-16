@@ -182,11 +182,15 @@ h2{font-size:18px;font-weight:700;letter-spacing:-.01em;margin:0}
 
 /* ---------- timer de descanso ---------- */
 #rest{
-  position:fixed;left:0;right:0;bottom:calc(72px + env(safe-area-inset-bottom));
+  position:fixed;left:0;right:0;
+  bottom:calc(72px + env(safe-area-inset-bottom));   /* tela inicial: acima da navegação */
   display:none;background:var(--yellow);color:#14171C;
-  padding:10px var(--pad);align-items:center;justify-content:space-between;gap:10px;
-  font-weight:800;z-index:40;
+  padding:12px var(--pad);align-items:center;justify-content:space-between;gap:10px;
+  font-weight:800;z-index:65;                        /* acima da tela de treino (60), abaixo do menu (80) */
+  box-shadow:0 -4px 16px rgba(0,0,0,.3);
 }
+/* durante um treino, a faixa é reposicionada por JS (positionRest) para
+   sentar exatamente acima do rodapé "Concluir treino" */
 #rest.on{display:flex}
 #rest .num{font-size:22px}
 #rest button{color:#14171C;font-weight:800;padding:6px 10px;border:1px solid rgba(0,0,0,.25);border-radius:8px}
@@ -752,6 +756,7 @@ function closeSheet(){
   $('#sheet-foot').classList.remove('on');
   $('#sheet-clock').textContent='';
   document.body.style.overflow='';
+  if(typeof positionRest==='function') positionRest();  // faixa volta para acima da navegação
   const f=onClose; onClose=null; if(f) f();
 }
 $('#sheet-close').onclick=()=>{
@@ -960,6 +965,7 @@ function startSession(routineId){
 // abre a tela do treino ativo (usado ao iniciar E ao retomar)
 function openSession(){
   drawSession();
+  if(typeof positionRest==='function') positionRest();  // se um descanso estiver rolando, recoloca acima do "Concluir"
   clearInterval(tick);
   tick=setInterval(()=>{
     if(!active) return;
@@ -1262,9 +1268,22 @@ function finishSession(){
    DESCANSO
    ========================================================== */
 let restLeft=0, restT=null;
+function positionRest(){
+  const el=$('#rest');
+  const foot=$('#sheet-foot');
+  const sessionOpen = $('#sheet').classList.contains('on') && foot.classList.contains('on');
+  if(sessionOpen){
+    // cola a faixa logo acima do rodapé "Concluir treino", medindo a altura real dele
+    const h=foot.getBoundingClientRect().height || 76;
+    el.style.bottom = h + 'px';
+  } else {
+    // tela inicial (ou qualquer tela sem rodapé): acima da barra de navegação
+    el.style.bottom = '';   // volta ao valor do CSS (72px + safe-area)
+  }
+}
 function startRest(){
   if(!db.cfg.restOn) return;                 // timer desligado nos Ajustes
-  restLeft=db.cfg.rest; $('#rest').classList.add('on'); paintRest();
+  restLeft=db.cfg.rest; positionRest(); $('#rest').classList.add('on'); paintRest();
   clearInterval(restT);
   restT=setInterval(()=>{
     restLeft--; paintRest();
@@ -1652,7 +1671,7 @@ $('#btn-wipe').onclick=()=>{
    O app pergunta ao service worker qual versão ele está servindo — se as duas
    não baterem, você está vendo arquivo velho, e o app te avisa disso.
    ========================================================== */
-const APP_VERSION='1.8.0';
+const APP_VERSION='1.8.1';
 const APP_DATE='16/07/2026';
 let swReg=null, swVersion=null, reloading=false;
 
