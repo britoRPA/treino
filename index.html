@@ -113,6 +113,20 @@ h2{font-size:18px;font-weight:700;letter-spacing:-.01em;margin:0}
 #update.on{display:flex}
 #update button{color:#fff;font-weight:800;padding:6px 10px;border:1px solid rgba(255,255,255,.45);border-radius:8px}
 
+/* PR ao vivo: some sozinho, não bloqueia o toque — o treino não pode parar por isso */
+#prtoast{
+  position:fixed;left:var(--pad);right:var(--pad);
+  top:calc(14px + env(safe-area-inset-top));
+  max-width:calc(640px - 2*var(--pad));margin:0 auto;
+  background:var(--red);color:#fff;border-radius:12px;
+  padding:12px 14px;font-size:14px;line-height:1.4;
+  z-index:75;box-shadow:0 8px 24px rgba(0,0,0,.35);
+  opacity:0;transform:translateY(-12px);pointer-events:none;
+  transition:opacity .2s,transform .2s;
+}
+#prtoast.on{opacity:1;transform:translateY(0)}
+#prtoast .sub{opacity:.85;font-weight:500}
+
 #menu{position:fixed;inset:0;z-index:80;display:none;background:rgba(0,0,0,.6)}
 #menu.on{display:block}
 #menu .panel{
@@ -383,6 +397,9 @@ nav button.on{color:var(--chalk)}
   </span>
 </div>
 
+<!-- ======================= PR AO VIVO ======================= -->
+<div id="prtoast"></div>
+
 <!-- ======================= MENU DE TIPO ======================= -->
 <div id="menu"><div class="panel"></div></div>
 
@@ -652,6 +669,20 @@ function bestWeight(exId){
   for(const s of SESS()) for(const t of workSets(s,exId)) best=Math.max(best,t.weight);
   return best;
 }
+// melhor série por VOLUME BRUTO (carga × reps) — métrica separada do 1RM estimado.
+// 1RM vive no exercício (Recordes do resumo, ponto no gráfico); volume vive na
+// série específica (tag "🏆" na própria linha). Aquecimento nunca conta.
+function bestVolumeSet(exId, exceptId){
+  let best=null;
+  for(const s of SESS()){
+    if(s.id===exceptId) continue;
+    for(const t of workSets(s,exId)){
+      const v=t.reps*t.weight;
+      if(v>0 && (!best || v>best.vol)) best={reps:t.reps, weight:t.weight, vol:v};
+    }
+  }
+  return best;
+}
 // rótulo de uma série no histórico: "8×60" ou "W 12×20"
 const setLabel=t=>`${TYPES[typeOf(t)].k?TYPES[typeOf(t)].k+' ':''}${t.reps}×${kg(t.weight)}`;
 
@@ -672,7 +703,7 @@ $$('nav button').forEach(b=>b.onclick=()=>go(b.dataset.v));
    TELA CHEIA
    ========================================================== */
 let onClose=null;
-function sheet(eyebrow,title,html,foot){
+function sheet(eyebrow,title,html,foot,opts){
   $('#sheet-eyebrow').textContent=eyebrow;
   $('#sheet-title').textContent=title;
   $('#sheet-body').innerHTML=html;
@@ -680,7 +711,10 @@ function sheet(eyebrow,title,html,foot){
   if(foot){ $('#sheet-foot').innerHTML=foot; $('#sheet-foot').classList.add('on'); }
   else { $('#sheet-foot').classList.remove('on'); }
   document.body.style.overflow='hidden';
-  $('#sheet').scrollTop=0;
+  // reabrir uma tela do zero volta ao topo; redesenhar a MESMA tela (ex.: marcar
+  // uma série) preserva onde você estava — senão, no último exercício, cada toque
+  // te chuta lá pra cima e você tem que rolar de volta.
+  if(!opts || !opts.keepScroll) $('#sheet').scrollTop=0;
 }
 function closeSheet(){
   $('#sheet').classList.remove('on');
@@ -894,19 +928,19 @@ function drawSession(){
         <button class="set-n ${ty!=='n'?'tagged':''}" data-act="type"
                 aria-label="Tipo da série: ${TYPES[ty].t}">${mark}</button>
         <div class="stepper">
-          <button data-act="r-">−</button>
-          <input type="number" inputmode="numeric" data-f="reps"
-                 value="${t.reps||''}" placeholder="${t.gr??'–'}">
-          <button data-act="r+">+</button>
-        </div>
-        <div class="set-x">×</div>
-        <div class="stepper">
           <button data-act="w-">−</button>
           <input type="number" inputmode="decimal" step="any" data-f="weight"
                  value="${t.weight||''}" placeholder="${t.gw!=null?kg(t.gw):'–'}">
           <button data-act="w+">+</button>
         </div>
-        <button class="check" data-act="ok">✓</button>
+        <div class="set-x">×</div>
+        <div class="stepper">
+          <button data-act="r-">−</button>
+          <input type="number" inputmode="numeric" data-f="reps"
+                 value="${t.reps||''}" placeholder="${t.gr??'–'}">
+          <button data-act="r+">+</button>
+        </div>
+        <button class="check" data-act="ok">${t.volPr?'🏆':'✓'}</button>
       </div>`;
     }).join('');
     return `<div class="ex">
@@ -915,7 +949,7 @@ function drawSession(){
         <button class="btn btn-ghost btn-sm" data-rmex="${ei}">Remover</button>
       </div>
       <div class="ex-last">${esc(lastTxt)}</div>
-      <div class="ledger-head"><span>Tipo</span><span>Reps</span><span></span><span>Carga (kg)</span><span></span></div>
+      <div class="ledger-head"><span>Tipo</span><span>Carga (kg)</span><span></span><span>Reps</span><span></span></div>
       <div class="ledger">${rows}</div>
       <div class="row" style="margin-top:10px">
         <button class="btn btn-ghost btn-sm" data-addwarm="${ei}">+ Aquec.</button>
@@ -928,25 +962,52 @@ function drawSession(){
   const empty = !active.entries.length
     ? `<div class="empty"><h2>Treino vazio</h2><p>Adicione o primeiro exercício.</p></div>` : '';
 
+  // preserva a rolagem: só volta ao topo quando a sessão está sendo aberta agora
+  // (sheet ainda não tem a classe 'on'); qualquer redesenho depois disso (marcar
+  // série, trocar tipo, adicionar série) mantém você onde estava.
+  const wasOpen=$('#sheet').classList.contains('on');
+  const pos=wasOpen ? $('#sheet').scrollTop : 0;
+
   sheet('Em andamento', active.name,
     empty + html + `<button class="btn btn-ghost" id="s-add" style="margin-top:4px">+ Adicionar exercício</button>`,
-    `<button class="btn btn-primary" id="s-finish">Concluir treino</button>`);
+    `<button class="btn btn-primary" id="s-finish">Concluir treino</button>`,
+    {keepScroll:true});
+  $('#sheet').scrollTop=pos;
 
   bindSession();
+}
+
+// aviso de PR: some sozinho, nunca trava o dedo no meio do treino
+function showPrToast(name, cur, prev){
+  const el=$('#prtoast');
+  const curVol=cur.reps*cur.weight;
+  const prevTxt = prev
+    ? `Recorde anterior: ${prev.reps}×${kg(prev.weight)} kg (${kg(prev.vol)} kg)`
+    : 'Primeiro registro com carga neste exercício.';
+  el.innerHTML = `<strong>🏆 PR de volume — ${esc(name||'')}</strong><br>
+    ${cur.reps}×${kg(cur.weight)} kg = ${kg(curVol)} kg · 1RM ~${kg(e1rm(cur.weight,cur.reps))} kg<br>
+    <span class="sub">${prevTxt}</span>`;
+  el.classList.add('on');
+  clearTimeout(el._h);
+  el._h=setTimeout(()=>el.classList.remove('on'), 4200);
 }
 
 function bindSession(){
   const body=$('#sheet-body');
 
   body.querySelectorAll('.set').forEach(row=>{
-    const ei=+row.dataset.e, si=+row.dataset.s, t=active.entries[ei].sets[si];
+    const ei=+row.dataset.e, si=+row.dataset.s, en=active.entries[ei], t=en.sets[si];
     row.querySelectorAll('input').forEach(inp=>{
       inp.oninput=()=>{ t[inp.dataset.f]=parseFloat(inp.value.replace(',','.'))||0; };
+      // toca no campo = valor inteiro selecionado, pronto para sobrescrever
+      // (senão é apagar dígito por dígito antes de digitar o novo número)
+      inp.onfocus=()=>{ try{ inp.select(); }catch(e){} };
     });
     row.querySelectorAll('button').forEach(b=>{
       b.onclick=()=>{
         const a=b.dataset.act, inc=db.cfg.inc;
         const ri=row.querySelector('[data-f=reps]'), wi=row.querySelector('[data-f=weight]');
+        const check=row.querySelector('.check');
         if(a==='r+'||a==='r-'){
           let base = t.reps || t.gr || 0;
           t.reps=Math.max(0, base + (a==='r+'?1:-1));
@@ -974,11 +1035,30 @@ function bindSession(){
             if(!t.reps){ ri.focus(); return; }
             t.done=true; row.classList.add('done');
             vibrate(30);
+
+            // PR de VOLUME (carga × reps), checado série a série, ao vivo.
+            // Compara com o histórico E com séries já confirmadas hoje mesmo
+            // (assim um segundo PR na mesma sessão só conta se superar o primeiro).
+            if(typeOf(t)!=='w'){
+              const vol=t.reps*t.weight;
+              let prev=bestVolumeSet(en.exerciseId, active.id);
+              for(const x of en.sets){
+                if(x===t || typeOf(x)==='w' || !x.done) continue;
+                const v2=x.reps*x.weight;
+                if(v2>0 && (!prev || v2>prev.vol)) prev={reps:x.reps, weight:x.weight, vol:v2};
+              }
+              if(vol>0 && (!prev || vol>prev.vol)){
+                t.volPr=true;
+                if(check) check.textContent='🏆';
+                showPrToast(exOf(en.exerciseId)?.name, t, prev);
+              }
+            }
             // sem descanso antes de um drop set — a carga cai e você emenda
             const next=active.entries[ei].sets[si+1];
             if(next && typeOf(next)==='d') stopRest(); else startRest();
           } else {
             t.done=false; row.classList.remove('done');
+            if(t.volPr){ t.volPr=false; if(check) check.textContent='✓'; }
           }
         }
       };
@@ -1016,14 +1096,30 @@ function bindSession(){
 }
 
 function finishSession(){
+  // série com dado digitado mas nunca confirmada com ✓ = provável esquecimento.
+  // Vazia e nunca tocada não conta (sobrar série pré-preenchida é normal).
+  const pendentes=[];
+  for(const en of active.entries){
+    const n=en.sets.filter(t=>!t.done && (t.reps>0 || t.weight>0)).length;
+    if(n) pendentes.push(`${exOf(en.exerciseId)?.name||'?'} (${n})`);
+  }
+  if(pendentes.length){
+    const ok=confirm(
+      'Estas séries têm dado digitado mas não foram confirmadas com ✓ — não serão salvas:\n\n'+
+      pendentes.join('\n')+
+      '\n\nConcluir mesmo assim? Cancelar para voltar e corrigir.');
+    if(!ok) return;
+  }
+
   const done=active.entries
     .map(e=>({exerciseId:e.exerciseId, sets:e.sets.filter(t=>t.done && t.reps>0)
-      .map(t=>({reps:t.reps, weight:t.weight, type:typeOf(t)}))}))
+      .map(t=>({reps:t.reps, weight:t.weight, type:typeOf(t), volPr:!!t.volPr}))}))
     .filter(e=>e.sets.length);
   if(!done.length){ alert('Marque ao menos uma série com ✓ antes de concluir.'); return; }
 
-  // recordes batidos nesta sessão — aquecimento nunca vira PR
-  const prs=[];
+  // 1RM estimado da melhor série de CADA exercício (não só dos recordes).
+  // O valor é a informação — a tag "PR" só sinaliza que hoje virou o novo teto.
+  const e1rms=[];
   for(const en of done){
     const prev=bestE1rm(en.exerciseId, active.id);
     let mine=0, best=null;
@@ -1032,9 +1128,10 @@ function finishSession(){
       if(v>mine){ mine=v; best=t; }
     }
     if(!best || !best.weight) continue;
-    if(mine>prev && prev>0) prs.push({name:exOf(en.exerciseId)?.name, set:best});
-    else if(prev===0) prs.push({name:exOf(en.exerciseId)?.name, set:best, first:true});
+    const recorde = mine>prev;           // prev=0 (primeira vez) também conta como recorde
+    e1rms.push({name:exOf(en.exerciseId)?.name, set:best, e1:mine, recorde, first:prev===0});
   }
+  const prs=e1rms.filter(x=>x.recorde);   // usado abaixo para marcar a sessão
 
   const s={
     id:active.id, date:active.date, name:active.name, routineId:active.routineId,
@@ -1043,6 +1140,11 @@ function finishSession(){
   };
   db.sessions.push(touch(s)); save();
   active=null; stopSessionClock();
+
+  // PR de volume: coletados série a série durante o treino (t.volPr), aqui só listados
+  const volPrs=[];
+  for(const en of done) for(const t of en.sets) if(t.volPr)
+    volPrs.push({name:exOf(en.exerciseId)?.name, set:t});
 
   const vol=volume(s);
   sheet('Concluído', s.name,
@@ -1053,13 +1155,21 @@ function finishSession(){
      </div>
      ${warmSets(s)?`<p class="note" style="margin:-4px 0 0">
         + ${warmSets(s)} série${warmSets(s)>1?'s':''} de aquecimento, fora da conta de volume.</p>`:''}
-     ${prs.length?`<div class="eyebrow" style="margin:18px 0 8px">Recordes</div>`+
-       prs.map(p=>`<div class="card"><div class="card-row">
+     ${volPrs.length?`<div class="eyebrow" style="margin:18px 0 8px">PR de volume (carga × reps)</div>`+
+       volPrs.map(p=>`<div class="card"><div class="card-row">
          <div><div style="font-weight:600">${esc(p.name)}</div>
-         <div class="meta num">${p.set.reps} × ${kg(p.set.weight)} kg</div></div>
-         <span class="tag tag-pr">${p.first?'1º registro':'PR'}</span>
+         <div class="meta num">${p.set.reps} × ${kg(p.set.weight)} kg = ${kg(p.set.reps*p.set.weight)} kg</div></div>
+         <span class="tag tag-pr">🏆</span>
+       </div></div>`).join('') : ''}
+     ${e1rms.length?`<div class="eyebrow" style="margin:18px 0 8px">1RM estimado (melhor série)</div>`+
+       e1rms.map(p=>`<div class="card"><div class="card-row">
+         <div><div style="font-weight:600">${esc(p.name)}</div>
+         <div class="meta num">${p.set.reps} × ${kg(p.set.weight)} kg → <b>${kg(p.e1)} kg</b></div></div>
+         ${p.recorde?`<span class="tag tag-pr">${p.first?'1º registro':'PR'}</span>`:''}
        </div></div>`).join('')
-      :`<p class="meta" style="margin-top:20px">Sem recordes hoje. Consistência também conta.</p>`}`,
+      :''}
+     ${!volPrs.length && !e1rms.length
+       ?`<p class="meta" style="margin-top:20px">Sem séries de trabalho registradas hoje.</p>`:''}`,
     `<button class="btn btn-primary" id="f-ok">Pronto</button>`);
   $('#f-ok').onclick=()=>{ closeSheet(); go('hist'); };
   stopRest();
@@ -1118,19 +1228,35 @@ function renderHist(){
 
 function showSession(id){
   const s=SESS().find(x=>x.id===id);
-  const body=s.entries.map(en=>`
+  const body=s.entries.map(en=>{
+    // melhor série de trabalho deste exercício nesta sessão → 1RM estimado
+    let top=0, bestSet=null;
+    for(const t of en.sets){
+      if(typeOf(t)==='w' || !(t.reps>0)) continue;
+      const v=e1rm(t.weight,t.reps);
+      if(v>top){ top=v; bestSet=t; }
+    }
+    const isPr = s.prs && s.prs.includes(exOf(en.exerciseId)?.name);
+    return `
     <div class="ex">
       <div class="card-row" style="margin-bottom:8px">
         <h2>${esc(exOf(en.exerciseId)?.name||'?')}</h2>
-        ${s.prs&&s.prs.includes(exOf(en.exerciseId)?.name)?`<span class="tag tag-pr">PR</span>`:''}
       </div>
+      ${top>0?`<div class="ex-last" style="display:flex;align-items:center;gap:8px">
+        1RM estimado: <b class="num">${kg(top)} kg</b>
+        <span class="meta">(${bestSet.reps}×${kg(bestSet.weight)})</span>
+        ${isPr?`<span class="tag tag-pr">PR</span>`:''}
+      </div>`:''}
       ${(()=>{ let n=0; return en.sets.map(t=>{
         const ty=typeOf(t); if(ty!=='w') n++;
         return `<div class="card-row ${ty==='w'?'warm':''}" style="padding:6px 0;border-top:1px solid var(--line)">
-          <span class="set-n ${ty!=='n'?'tagged':''}" style="height:auto;padding:2px 0">${ty==='n'?n:TYPES[ty].k}</span>
-          <span class="num">${t.reps} × ${kg(t.weight)} kg</span>
+          <span style="display:flex;align-items:center;gap:10px">
+            <span class="set-n ${ty!=='n'?'tagged':''}" style="height:auto;padding:2px 0">${ty==='n'?n:TYPES[ty].k}</span>
+            <span class="num">${t.reps} × ${kg(t.weight)} kg</span>
+          </span>
+          ${t.volPr?`<span class="tag tag-pr">🏆 PR</span>`:''}
         </div>`; }).join(''); })()}
-    </div>`).join('');
+    </div>`; }).join('');
   sheet(dayFull(s.date), s.name,
     `<div class="stats">
       <div class="stat"><span class="num">${clock(s.durationSec)}</span><span class="eyebrow">Duração</span></div>
@@ -1235,7 +1361,12 @@ function showEx(id){
   }).filter(p=>p.e1>0);
 
   const maxW=bestWeight(id);
-  const maxE=pts.length?Math.max(...pts.map(p=>p.e1)):0;
+  // melhor 1RM histórico + a série que o gerou (para mostrar o cálculo, não só o número)
+  let maxE=0, maxSet=null, maxDate=null;
+  for(const s of SESS()) for(const t of workSets(s,id)){
+    const v=e1rm(t.weight,t.reps);
+    if(v>maxE){ maxE=v; maxSet=t; maxDate=s.date; }
+  }
 
   const chart = pts.length>1 ? sparkline(pts) :
     `<p class="meta" style="padding:20px 0">Registre pelo menos dois treinos com este exercício para ver a curva de evolução.</p>`;
@@ -1252,6 +1383,10 @@ function showEx(id){
       <div class="stat"><span class="num">${maxE?kg(maxE):'–'}</span><span class="eyebrow">1RM estim.</span></div>
       <div class="stat"><span class="num">${historyOf(id).length}</span><span class="eyebrow">Sessões</span></div>
      </div>
+     ${maxSet?`<div class="card"><div class="eyebrow" style="margin-bottom:6px">Melhor 1RM estimado</div>
+        <div class="num" style="font-size:15px">${maxSet.reps} × ${kg(maxSet.weight)} kg → <b style="color:var(--red)">${kg(maxE)} kg</b></div>
+        <p class="note" style="margin:6px 0 0">Fórmula de Epley: carga × (1 + reps ÷ 30). Em ${day(maxDate)}.</p>
+      </div>`:''}
      <div class="eyebrow" style="margin:20px 0 8px">Evolução — 1RM estimado</div>
      ${chart}
      <div class="eyebrow" style="margin:24px 0 4px">Histórico</div>
@@ -1332,8 +1467,10 @@ $('#btn-export').onclick=()=>
 function exportarCsv(){
   const dec=n=>(Math.round(n*100)/100).toString().replace('.',',');
   const q=v=>`"${String(v).replace(/"/g,'""')}"`;
+  // duas métricas de recorde, separadas: 1RM estimado é por exercício/sessão,
+  // volume bruto é por série específica — não misturar as colunas.
   const cols=['data','hora','treino','duracao_min','exercicio','grupo','serie','tipo',
-              'reps','carga_kg','volume_kg','e1rm_kg','recorde'];
+              'reps','carga_kg','volume_kg','e1rm_kg','recorde_1rm','recorde_volume'];
   const linhas=[cols.join(';')];
 
   for(const s of [...SESS()].sort((a,b)=>a.date-b.date)){
@@ -1342,7 +1479,7 @@ function exportarCsv(){
     const hora=d.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
     for(const en of s.entries){
       const e=exOf(en.exerciseId);
-      const pr=(s.prs||[]).includes(e?e.name:'') ? 'Sim' : 'Não';
+      const pr1rm=(s.prs||[]).includes(e?e.name:'') ? 'Sim' : 'Não';
       let n=0;
       for(const t of en.sets){
         const ty=typeOf(t);
@@ -1355,7 +1492,8 @@ function exportarCsv(){
           t.reps, dec(t.weight),
           ty==='w' ? '0' : dec(t.reps*t.weight),   // aquecimento não soma volume
           dec(e1rm(t.weight,t.reps)),
-          pr
+          pr1rm,
+          t.volPr ? 'Sim' : 'Não'
         ].join(';'));
       }
     }
@@ -1409,8 +1547,8 @@ $('#btn-wipe').onclick=()=>{
    O app pergunta ao service worker qual versão ele está servindo — se as duas
    não baterem, você está vendo arquivo velho, e o app te avisa disso.
    ========================================================== */
-const APP_VERSION='1.3.0';
-const APP_DATE='13/07/2026';
+const APP_VERSION='1.5.0';
+const APP_DATE='16/07/2026';
 let swReg=null, swVersion=null, reloading=false;
 
 function showUpdate(){ $('#update').classList.add('on'); }
