@@ -326,8 +326,14 @@ nav button.on{color:var(--chalk)}
       Aberto pela tela inicial, ele roda sem as barras do navegador.</p>
     </div>
     <div class="card">
-      <div class="eyebrow" style="margin-bottom:8px">Descanso padrão</div>
-      <div class="row">
+      <div class="card-row" style="margin-bottom:10px">
+        <div class="eyebrow" style="margin:0">Timer de descanso</div>
+        <button class="btn btn-ghost btn-sm" id="rest-toggle">—</button>
+      </div>
+      <p class="note" style="margin:0 0 10px">Quando ligado, um cronômetro regressivo aparece
+        automaticamente ao confirmar uma série. Quando desligado, nenhum timer aparece.</p>
+      <div class="eyebrow" style="margin-bottom:8px">Tempo padrão</div>
+      <div class="row" id="rest-times">
         <button class="btn btn-ghost rest-opt" data-s="60">60s</button>
         <button class="btn btn-ghost rest-opt" data-s="90">90s</button>
         <button class="btn btn-ghost rest-opt" data-s="120">2min</button>
@@ -371,7 +377,7 @@ nav button.on{color:var(--chalk)}
 
 <!-- ======================= TIMER ======================= -->
 <div id="rest">
-  <span>Descanso</span>
+  <span>⏱ Descanso</span>
   <span class="num" id="rest-clock">0:00</span>
   <span style="display:flex;gap:6px">
     <button id="rest-plus">+30s</button>
@@ -510,6 +516,7 @@ try{
   db = raw ? JSON.parse(raw) : fresh();
 }catch(e){ db = fresh(); }
 if(!db.cfg) db.cfg={rest:90,inc:2.5};
+if(db.cfg.restOn===undefined) db.cfg.restOn=true;   // default ligado (comportamento atual)
 const save = ()=> LS.set(KEY, JSON.stringify(db));
 
 /* ---------- utilidades ---------- */
@@ -1256,6 +1263,7 @@ function finishSession(){
    ========================================================== */
 let restLeft=0, restT=null;
 function startRest(){
+  if(!db.cfg.restOn) return;                 // timer desligado nos Ajustes
   restLeft=db.cfg.rest; $('#rest').classList.add('on'); paintRest();
   clearInterval(restT);
   restT=setInterval(()=>{
@@ -1505,6 +1513,14 @@ function renderCfg(){
                  || window.matchMedia('(display-mode: fullscreen)').matches
                  || window.navigator.standalone===true;
   $('#install-tip').style.display = instalado ? 'none' : 'block';
+  // toggle do timer de descanso
+  const on=db.cfg.restOn;
+  const tg=$('#rest-toggle');
+  tg.textContent = on ? 'Ligado' : 'Desligado';
+  tg.style.borderColor = on ? 'var(--blue)' : 'var(--line)';
+  tg.style.color = on ? 'var(--blue)' : 'var(--dim)';
+  $('#rest-times').style.opacity = on ? '1' : '.4';
+  $('#rest-times').style.pointerEvents = on ? 'auto' : 'none';
   $$('.rest-opt').forEach(b=>b.style.borderColor = (+b.dataset.s===db.cfg.rest)?'var(--blue)':'var(--line)');
   $$('.rest-opt').forEach(b=>b.style.color = (+b.dataset.s===db.cfg.rest)?'var(--blue)':'var(--chalk)');
   $$('.inc-opt').forEach(b=>b.style.borderColor = (+b.dataset.i===db.cfg.inc)?'var(--blue)':'var(--line)');
@@ -1519,8 +1535,13 @@ function renderCfg(){
     ? 'Os dados ficam apenas neste aparelho, no armazenamento do navegador. Nada sai daqui. Exporte um backup de vez em quando — limpar os dados do navegador apaga tudo.'
     : 'Atenção: este ambiente não permite salvar. Os dados existem só enquanto a página estiver aberta. Abra o arquivo direto no navegador do celular para que o registro seja gravado.';
 }
-$$('.rest-opt').forEach(b=>b.onclick=()=>{ db.cfg.rest=+b.dataset.s; save(); renderCfg(); });
-$$('.inc-opt').forEach(b=>b.onclick=()=>{ db.cfg.inc=+b.dataset.i; save(); renderCfg(); });
+$('#rest-toggle').onclick=()=>{
+  db.cfg.restOn=!db.cfg.restOn; db.cfg.up=Date.now(); save();
+  if(!db.cfg.restOn) stopRest();   // desligou no meio de um descanso: some a faixa
+  renderCfg();
+};
+$$('.rest-opt').forEach(b=>b.onclick=()=>{ db.cfg.rest=+b.dataset.s; db.cfg.up=Date.now(); save(); renderCfg(); });
+$$('.inc-opt').forEach(b=>b.onclick=()=>{ db.cfg.inc=+b.dataset.i; db.cfg.up=Date.now(); save(); renderCfg(); });
 
 /* ---------- backup JSON: exporta tudo, inclusive lápides ---------- */
 function baixar(nome, texto, mime){
@@ -1631,7 +1652,7 @@ $('#btn-wipe').onclick=()=>{
    O app pergunta ao service worker qual versão ele está servindo — se as duas
    não baterem, você está vendo arquivo velho, e o app te avisa disso.
    ========================================================== */
-const APP_VERSION='1.7.1';
+const APP_VERSION='1.8.0';
 const APP_DATE='16/07/2026';
 let swReg=null, swVersion=null, reloading=false;
 
