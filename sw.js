@@ -4,7 +4,7 @@
    de o sw.js ter mudado. O resto (ícones, manifest) fica cache-first, porque
    quase nunca muda.
    Ao publicar uma versão: suba o V aqui E o APP_VERSION no index.html. */
-const V = '1.8.1';
+const V = '1.9.0';
 const C = 'ferro-' + V;
 const FILES = ['./', './index.html', './manifest.webmanifest', './icon-192.png', './icon-512.png'];
 

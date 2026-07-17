@@ -77,8 +77,12 @@ h2{font-size:18px;font-weight:700;letter-spacing:-.01em;margin:0}
   font-weight:700;letter-spacing:.01em;width:100%;
 }
 .btn-primary{background:var(--blue);color:#fff}
-.btn-ghost{border:1px solid var(--line);color:var(--chalk)}
-.btn-danger{border:1px solid var(--red);color:var(--red)}
+/* secundário: preenchimento sutil (iron-3) para ter corpo visível sobre os cards,
+   em vez de só borda que some no fundo. Continua abaixo do azul na hierarquia. */
+.btn-ghost{background:var(--iron-3);border:1px solid var(--line);color:var(--chalk)}
+.btn-ghost:active{background:var(--line)}
+.btn-danger{background:transparent;border:1px solid var(--red);color:var(--red)}
+.btn-danger:active{background:rgba(200,54,45,.12)}
 .btn-sm{min-height:40px;font-size:14px;padding:0 12px;width:auto}
 .btn:active{transform:translateY(1px)}
 
@@ -216,7 +220,7 @@ nav button.on{color:var(--chalk)}
   padding:3px 7px;border-radius:5px;
 }
 .tag-pr{background:var(--red);color:#fff}
-.tag-mut{border:1px solid var(--line);color:var(--dim)}
+.tag-mut{background:var(--iron-3);border:1px solid var(--line);color:var(--dim)}
 
 /* ---------- estado vazio ---------- */
 .empty{text-align:center;padding:44px 20px;color:var(--dim)}
@@ -1537,13 +1541,16 @@ function renderCfg(){
   const tg=$('#rest-toggle');
   tg.textContent = on ? 'Ligado' : 'Desligado';
   tg.style.borderColor = on ? 'var(--blue)' : 'var(--line)';
-  tg.style.color = on ? 'var(--blue)' : 'var(--dim)';
+  tg.style.color = on ? '#fff' : 'var(--dim)';
+  tg.style.background = on ? 'var(--blue)' : 'var(--iron-3)';
   $('#rest-times').style.opacity = on ? '1' : '.4';
   $('#rest-times').style.pointerEvents = on ? 'auto' : 'none';
-  $$('.rest-opt').forEach(b=>b.style.borderColor = (+b.dataset.s===db.cfg.rest)?'var(--blue)':'var(--line)');
-  $$('.rest-opt').forEach(b=>b.style.color = (+b.dataset.s===db.cfg.rest)?'var(--blue)':'var(--chalk)');
-  $$('.inc-opt').forEach(b=>b.style.borderColor = (+b.dataset.i===db.cfg.inc)?'var(--blue)':'var(--line)');
-  $$('.inc-opt').forEach(b=>b.style.color = (+b.dataset.i===db.cfg.inc)?'var(--blue)':'var(--chalk)');
+  $$('.rest-opt').forEach(b=>{ const on=+b.dataset.s===db.cfg.rest;
+    b.style.borderColor=on?'var(--blue)':'var(--line)'; b.style.color=on?'#fff':'var(--chalk)';
+    b.style.background=on?'var(--blue)':'var(--iron-3)'; });
+  $$('.inc-opt').forEach(b=>{ const on=+b.dataset.i===db.cfg.inc;
+    b.style.borderColor=on?'var(--blue)':'var(--line)'; b.style.color=on?'#fff':'var(--chalk)';
+    b.style.background=on?'var(--blue)':'var(--iron-3)'; });
   const cache = swVersion ? `v${swVersion}` : (location.protocol.startsWith('http') ? 'ainda não instalado' : 'não se aplica (arquivo local)');
   const divergiu = swVersion && swVersion!==APP_VERSION;
   $('#ver-info').innerHTML =
@@ -1671,8 +1678,8 @@ $('#btn-wipe').onclick=()=>{
    O app pergunta ao service worker qual versão ele está servindo — se as duas
    não baterem, você está vendo arquivo velho, e o app te avisa disso.
    ========================================================== */
-const APP_VERSION='1.8.1';
-const APP_DATE='16/07/2026';
+const APP_VERSION='1.9.0';
+const APP_DATE='17/07/2026';
 let swReg=null, swVersion=null, reloading=false;
 
 function showUpdate(){ $('#update').classList.add('on'); }
