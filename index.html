@@ -261,6 +261,27 @@ nav button.on{color:var(--chalk)}
 .stat{background:var(--iron-2);border:1px solid var(--line);border-radius:10px;padding:10px;text-align:center}
 .stat .num{font-size:20px;display:block}
 .stat .eyebrow{margin-top:2px}
+/* ---------- calendário do histórico ---------- */
+.cal{background:var(--iron-2);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:14px}
+.cal-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+.cal-title{font-weight:700;font-size:15px;text-transform:capitalize}
+.cal-nav{display:flex;gap:6px}
+.cal-nav button{width:36px;height:36px;border:1px solid var(--line);background:var(--iron-3);border-radius:9px;color:var(--chalk);font-size:16px;font-weight:700;display:flex;align-items:center;justify-content:center}
+.cal-nav button:active{background:var(--line)}
+.cal-nav button:disabled{opacity:.35}
+.cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:3px}
+.cal-dow{text-align:center;font-size:10px;font-weight:700;color:var(--dimmer);padding-bottom:4px;text-transform:uppercase}
+.cal-cell{aspect-ratio:1;display:flex;align-items:center;justify-content:center;border-radius:8px;font-size:13px}
+.cal-cell.empty{visibility:hidden}
+.cal-cell.today{outline:1px solid var(--dimmer)}
+.cal-cell .d{color:var(--dim)}
+.cal-cell.trained{background:var(--blue);cursor:pointer}
+.cal-cell.trained .d{color:#fff;font-weight:700}
+.cal-cell.trained:active{filter:brightness(.9)}
+.cal-foot{display:flex;align-items:center;justify-content:space-between;margin-top:14px;padding-top:12px;border-top:1px solid var(--line)}
+.cal-foot .big{font-size:15px}
+.cal-foot .big b{color:var(--chalk)}
+.cal-streak{display:flex;align-items:center;gap:6px;color:var(--dim);font-size:13px}
 .pick{display:flex;align-items:center;gap:10px;padding:13px 0;border-bottom:1px solid var(--line);width:100%;text-align:left}
 .pick.sel{color:var(--blue)}
 .chips{display:flex;flex-wrap:wrap;gap:8px}
@@ -307,6 +328,7 @@ nav button.on{color:var(--chalk)}
   </div>
   <div class="wrap">
     <div class="stats" id="hist-stats"></div>
+    <div id="hist-cal"></div>
     <div id="sessions"></div>
   </div>
 </section>
@@ -728,6 +750,7 @@ const setLabel=t=>`${TYPES[typeOf(t)].k?TYPES[typeOf(t)].k+' ':''}${t.reps}×${k
    ========================================================== */
 const renderers={treinar:renderTreinar, hist:renderHist, ex:renderEx, cfg:renderCfg};
 function go(v){
+  if(v==='hist') calView=null;   // sempre abre o histórico no mês atual
   $$('.view').forEach(x=>x.classList.remove('on'));
   $('#v-'+v).classList.add('on');
   $$('nav button').forEach(b=>b.classList.toggle('on', b.dataset.v===v));
@@ -1316,6 +1339,8 @@ function renderHist(){
     <div class="stat"><span class="num">${week}</span><span class="eyebrow">Últ. 7 dias</span></div>
     <div class="stat"><span class="num">${Math.round(vol).toLocaleString('pt-BR')}</span><span class="eyebrow">Volume total kg</span></div>`;
 
+  renderCalendar();
+
   const c=$('#sessions');
   if(!ss.length){
     c.innerHTML=`<div class="empty"><h2>Nada registrado</h2><p>Seus treinos concluídos aparecem aqui.</p></div>`;
@@ -1335,6 +1360,81 @@ function renderHist(){
       </div>
     </button>`).join('');
   c.querySelectorAll('[data-s]').forEach(b=>b.onclick=()=>showSession(b.dataset.s));
+}
+
+/* ==========================================================
+   CALENDÁRIO DO HISTÓRICO
+   ========================================================== */
+const CAL_MES=['janeiro','fevereiro','março','abril','maio','junho','julho','agosto','setembro','outubro','novembro','dezembro'];
+const CAL_DOW=['D','S','T','Q','Q','S','S'];
+const calYmd=ts=>{const d=new Date(ts);return d.getFullYear()+'-'+d.getMonth()+'-'+d.getDate();};
+let calView=null;   // primeiro dia do mês exibido; null = mês atual
+
+function calStreak(){
+  // dias consecutivos até hoje com ao menos um treino (conta a partir de ontem se hoje ainda não treinou)
+  const set=new Set(SESS().map(s=>calYmd(s.date)));
+  let n=0; const d=new Date();
+  if(!set.has(calYmd(d.getTime()))) d.setDate(d.getDate()-1);
+  while(set.has(calYmd(d.getTime()))){ n++; d.setDate(d.getDate()-1); }
+  return n;
+}
+
+function renderCalendar(){
+  const el=$('#hist-cal'); if(!el) return;
+  const ss=SESS();
+  if(!ss.length){ el.innerHTML=''; return; }
+
+  const now=new Date();
+  if(!calView) calView=new Date(now.getFullYear(), now.getMonth(), 1);
+
+  // treinos por dia
+  const byDay={};
+  for(const s of ss){ (byDay[calYmd(s.date)]=byDay[calYmd(s.date)]||[]).push(s); }
+
+  const y=calView.getFullYear(), mo=calView.getMonth();
+  const startDow=new Date(y,mo,1).getDay();
+  const days=new Date(y,mo+1,0).getDate();
+  const firstTs=Math.min(...ss.map(s=>s.date));
+  const firstD=new Date(firstTs);
+  const prevDisabled = new Date(y,mo,1) <= new Date(firstD.getFullYear(), firstD.getMonth(), 1);
+  const nextDisabled = y===now.getFullYear() && mo===now.getMonth();
+
+  let cells='';
+  for(let i=0;i<startDow;i++) cells+=`<div class="cal-cell empty"></div>`;
+  let trained=0;
+  for(let d=1;d<=days;d++){
+    const key=y+'-'+mo+'-'+d;
+    const isToday=(y===now.getFullYear()&&mo===now.getMonth()&&d===now.getDate());
+    if(byDay[key]){ trained++;
+      cells+=`<div class="cal-cell trained ${isToday?'today':''}" data-cal="${key}"><span class="d">${d}</span></div>`;
+    } else {
+      cells+=`<div class="cal-cell ${isToday?'today':''}"><span class="d">${d}</span></div>`;
+    }
+  }
+
+  const streak=calStreak();
+  el.innerHTML=`<div class="cal">
+    <div class="cal-head">
+      <div class="cal-title">${CAL_MES[mo]} ${y}</div>
+      <div class="cal-nav">
+        <button id="cal-prev" ${prevDisabled?'disabled':''} aria-label="Mês anterior">‹</button>
+        <button id="cal-next" ${nextDisabled?'disabled':''} aria-label="Próximo mês">›</button>
+      </div>
+    </div>
+    <div class="cal-grid">${CAL_DOW.map(d=>`<div class="cal-dow">${d}</div>`).join('')}${cells}</div>
+    <div class="cal-foot">
+      <span class="big"><b class="num">${trained}</b> ${trained===1?'dia':'dias'} de treino</span>
+      ${streak>0?`<span class="cal-streak">🔥 sequência de <b class="num">&nbsp;${streak}</b>&nbsp;${streak===1?'dia':'dias'}</span>`:''}
+    </div>
+  </div>`;
+
+  const prev=$('#cal-prev'), next=$('#cal-next');
+  if(prev && !prevDisabled) prev.onclick=()=>{ calView.setMonth(calView.getMonth()-1); renderCalendar(); };
+  if(next && !nextDisabled) next.onclick=()=>{ calView.setMonth(calView.getMonth()+1); renderCalendar(); };
+  el.querySelectorAll('[data-cal]').forEach(c=>c.onclick=()=>{
+    const list=byDay[c.dataset.cal].slice().sort((a,b)=>b.date-a.date);
+    showSession(list[0].id);   // abre o mais recente do dia
+  });
 }
 
 function showSession(id){
@@ -1801,7 +1901,7 @@ $('#btn-wipe').onclick=()=>{
    O app pergunta ao service worker qual versão ele está servindo — se as duas
    não baterem, você está vendo arquivo velho, e o app te avisa disso.
    ========================================================== */
-const APP_VERSION='1.11.0';
+const APP_VERSION='1.12.0';
 const APP_DATE='21/07/2026';
 let swReg=null, swVersion=null, reloading=false;
 
