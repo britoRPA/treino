@@ -269,16 +269,18 @@ nav button.on{color:var(--chalk)}
 .cal-nav button{width:36px;height:36px;border:1px solid var(--dimmer);background:var(--iron-3);border-radius:9px;color:var(--chalk);font-size:20px;font-weight:700;line-height:1;display:flex;align-items:center;justify-content:center}
 .cal-nav button:active{background:var(--blue);border-color:var(--blue);color:#fff}
 .cal-nav button:disabled{opacity:.3;border-color:var(--line);color:var(--dimmer)}
-.cal-grid{display:grid;grid-template-columns:repeat(7,1fr);grid-auto-rows:38px;gap:3px}
-.cal-dow{text-align:center;font-size:10px;font-weight:700;color:var(--dimmer);padding-bottom:4px;text-transform:uppercase;height:auto}
+.cal-grid{display:grid;grid-template-columns:repeat(7,1fr);grid-template-rows:auto;grid-auto-rows:38px;gap:3px}
+.cal-dow{text-align:center;font-size:11px;font-weight:800;color:var(--chalk);padding-bottom:4px;text-transform:uppercase;height:auto}
 .cal-cell{display:flex;align-items:center;justify-content:center;border-radius:8px;font-size:13px;min-width:0}
 .cal-cell.empty{visibility:hidden}
 .cal-cell.adj .d{color:var(--dimmer)}
-.cal-cell.today{outline:1px solid var(--dimmer)}
-.cal-cell .d{color:var(--dim)}
+.cal-cell .d{color:var(--chalk)}
 .cal-cell.trained{background:var(--blue);cursor:pointer}
 .cal-cell.trained .d{color:#fff;font-weight:700}
 .cal-cell.trained:active{filter:brightness(.9)}
+/* hoje: pílula cinza clara, neutra — destaque sem virar cor semântica (azul=treino) */
+.cal-cell.today{background:var(--dimmer)}
+.cal-cell.today .d{color:var(--chalk);font-weight:700}
 .cal-foot{display:flex;align-items:center;justify-content:space-between;margin-top:14px;padding-top:12px;border-top:1px solid var(--line)}
 .cal-foot .big{font-size:15px}
 .cal-foot .big b{color:var(--chalk)}
@@ -377,9 +379,9 @@ nav button.on{color:var(--chalk)}
       <div class="eyebrow" style="margin-bottom:8px">Incremento de carga</div>
       <div class="row">
         <button class="btn btn-ghost inc-opt" data-i="1">1 kg</button>
-        <button class="btn btn-ghost inc-opt" data-i="2.5">2,5 kg</button>
         <button class="btn btn-ghost inc-opt" data-i="5">5 kg</button>
         <button class="btn btn-ghost inc-opt" data-i="7">7 kg</button>
+        <button class="btn btn-ghost inc-opt" data-i="10">10 kg</button>
       </div>
     </div>
     <div class="hr"></div>
@@ -541,7 +543,7 @@ function fresh(){
     exercises: catalogList().map((e,i)=>({id:'e'+i, name:e.name, muscle:e.muscle, up:0})),
     routines: [],
     sessions: [],
-    cfg: {rest:90, inc:2.5, up:0}
+    cfg: {rest:90, inc:5, up:0}
   };
 }
 let db;
@@ -549,7 +551,9 @@ try{
   const raw=LS.get(KEY);
   db = raw ? JSON.parse(raw) : fresh();
 }catch(e){ db = fresh(); }
-if(!db.cfg) db.cfg={rest:90,inc:2.5};
+if(!db.cfg) db.cfg={rest:90,inc:5};
+// opções de incremento mudaram (1/5/7/10): quem tinha 2,5 salvo vai para o vizinho (5)
+if(![1,5,7,10].includes(db.cfg.inc)) db.cfg.inc=5;
 if(db.cfg.restOn===undefined) db.cfg.restOn=true;   // default ligado (comportamento atual)
 const save = ()=> LS.set(KEY, JSON.stringify(db));
 
@@ -1396,10 +1400,9 @@ function renderCalendar(){
   const y=calView.getFullYear(), mo=calView.getMonth();
   const startDow=new Date(y,mo,1).getDay();
   const days=new Date(y,mo+1,0).getDate();
-  const firstTs=Math.min(...ss.map(s=>s.date));
-  const firstD=new Date(firstTs);
-  const prevDisabled = new Date(y,mo,1) <= new Date(firstD.getFullYear(), firstD.getMonth(), 1);
-  const nextDisabled = y===now.getFullYear() && mo===now.getMonth();
+  // navegação sempre livre: dá pra folhear qualquer mês, pra frente e pra trás.
+  // (antes os botões eram desabilitados quando só havia treino no mês atual, e
+  //  botão desabilitado ficava escuro — parecia quebrado.)
 
   let cells='';
   // dias que sobram do mês anterior, só como contexto visual (esmaecidos, sem clique)
@@ -1424,8 +1427,8 @@ function renderCalendar(){
     <div class="cal-head">
       <div class="cal-title">${CAL_MES[mo]} ${y}</div>
       <div class="cal-nav">
-        <button id="cal-prev" ${prevDisabled?'disabled':''} aria-label="Mês anterior">‹</button>
-        <button id="cal-next" ${nextDisabled?'disabled':''} aria-label="Próximo mês">›</button>
+        <button id="cal-prev" aria-label="Mês anterior">‹</button>
+        <button id="cal-next" aria-label="Próximo mês">›</button>
       </div>
     </div>
     <div class="cal-grid">${CAL_DOW.map(d=>`<div class="cal-dow">${d}</div>`).join('')}${cells}</div>
@@ -1436,8 +1439,8 @@ function renderCalendar(){
   </div>`;
 
   const prev=$('#cal-prev'), next=$('#cal-next');
-  if(prev && !prevDisabled) prev.onclick=()=>{ calView.setMonth(calView.getMonth()-1); renderCalendar(); };
-  if(next && !nextDisabled) next.onclick=()=>{ calView.setMonth(calView.getMonth()+1); renderCalendar(); };
+  if(prev) prev.onclick=()=>{ calView.setMonth(calView.getMonth()-1); renderCalendar(); };
+  if(next) next.onclick=()=>{ calView.setMonth(calView.getMonth()+1); renderCalendar(); };
   el.querySelectorAll('[data-cal]').forEach(c=>c.onclick=()=>{
     const list=byDay[c.dataset.cal].slice().sort((a,b)=>b.date-a.date);
     showSession(list[0].id);   // abre o mais recente do dia
@@ -1908,7 +1911,7 @@ $('#btn-wipe').onclick=()=>{
    O app pergunta ao service worker qual versão ele está servindo — se as duas
    não baterem, você está vendo arquivo velho, e o app te avisa disso.
    ========================================================== */
-const APP_VERSION='1.13.0';
+const APP_VERSION='1.14.0';
 const APP_DATE='29/07/2026';
 let swReg=null, swVersion=null, reloading=false;
 
