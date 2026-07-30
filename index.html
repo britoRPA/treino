@@ -266,13 +266,14 @@ nav button.on{color:var(--chalk)}
 .cal-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
 .cal-title{font-weight:700;font-size:15px;text-transform:capitalize}
 .cal-nav{display:flex;gap:6px}
-.cal-nav button{width:36px;height:36px;border:1px solid var(--line);background:var(--iron-3);border-radius:9px;color:var(--chalk);font-size:16px;font-weight:700;display:flex;align-items:center;justify-content:center}
-.cal-nav button:active{background:var(--line)}
-.cal-nav button:disabled{opacity:.35}
+.cal-nav button{width:36px;height:36px;border:1px solid var(--dimmer);background:var(--iron-3);border-radius:9px;color:var(--chalk);font-size:20px;font-weight:700;line-height:1;display:flex;align-items:center;justify-content:center}
+.cal-nav button:active{background:var(--blue);border-color:var(--blue);color:#fff}
+.cal-nav button:disabled{opacity:.3;border-color:var(--line);color:var(--dimmer)}
 .cal-grid{display:grid;grid-template-columns:repeat(7,1fr);grid-auto-rows:38px;gap:3px}
 .cal-dow{text-align:center;font-size:10px;font-weight:700;color:var(--dimmer);padding-bottom:4px;text-transform:uppercase;height:auto}
 .cal-cell{display:flex;align-items:center;justify-content:center;border-radius:8px;font-size:13px;min-width:0}
 .cal-cell.empty{visibility:hidden}
+.cal-cell.adj .d{color:var(--dimmer)}
 .cal-cell.today{outline:1px solid var(--dimmer)}
 .cal-cell .d{color:var(--dim)}
 .cal-cell.trained{background:var(--blue);cursor:pointer}
@@ -378,6 +379,7 @@ nav button.on{color:var(--chalk)}
         <button class="btn btn-ghost inc-opt" data-i="1">1 kg</button>
         <button class="btn btn-ghost inc-opt" data-i="2.5">2,5 kg</button>
         <button class="btn btn-ghost inc-opt" data-i="5">5 kg</button>
+        <button class="btn btn-ghost inc-opt" data-i="7">7 kg</button>
       </div>
     </div>
     <div class="hr"></div>
@@ -1400,7 +1402,9 @@ function renderCalendar(){
   const nextDisabled = y===now.getFullYear() && mo===now.getMonth();
 
   let cells='';
-  for(let i=0;i<startDow;i++) cells+=`<div class="cal-cell empty"></div>`;
+  // dias que sobram do mês anterior, só como contexto visual (esmaecidos, sem clique)
+  const prevDays=new Date(y,mo,0).getDate();
+  for(let i=startDow-1;i>=0;i--) cells+=`<div class="cal-cell adj"><span class="d">${prevDays-i}</span></div>`;
   let trained=0;
   for(let d=1;d<=days;d++){
     const key=y+'-'+mo+'-'+d;
@@ -1411,6 +1415,9 @@ function renderCalendar(){
       cells+=`<div class="cal-cell ${isToday?'today':''}"><span class="d">${d}</span></div>`;
     }
   }
+  // primeiros dias do mês seguinte, completando a última semana
+  const trail=(7-((startDow+days)%7))%7;
+  for(let d=1;d<=trail;d++) cells+=`<div class="cal-cell adj"><span class="d">${d}</span></div>`;
 
   const streak=calStreak();
   el.innerHTML=`<div class="cal">
@@ -1901,8 +1908,8 @@ $('#btn-wipe').onclick=()=>{
    O app pergunta ao service worker qual versão ele está servindo — se as duas
    não baterem, você está vendo arquivo velho, e o app te avisa disso.
    ========================================================== */
-const APP_VERSION='1.12.1';
-const APP_DATE='21/07/2026';
+const APP_VERSION='1.13.0';
+const APP_DATE='29/07/2026';
 let swReg=null, swVersion=null, reloading=false;
 
 function showUpdate(){ $('#update').classList.add('on'); }
