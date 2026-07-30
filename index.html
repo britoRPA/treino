@@ -4,7 +4,18 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#14171C">
-<meta name="color-scheme" content="dark">
+<meta name="color-scheme" content="dark light">
+<script>
+/* aplica o tema salvo ANTES do primeiro paint, para não piscar escuro no tema claro */
+try{
+  var _c=JSON.parse(localStorage.getItem('ferro:v1')||'{}').cfg;
+  if(_c&&_c.theme==='light'){
+    document.documentElement.setAttribute('data-theme','light');
+    var _m=document.querySelector('meta[name="theme-color"]');
+    if(_m) _m.setAttribute('content','#F3F1EC');
+  }
+}catch(e){}
+</script>
 <title>Ferro — registro de treinos</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon-192.png">
@@ -28,9 +39,30 @@
   --red:#C8362D;
   --green:#2E8B57;
   --yellow:#E8B32C;
+  /* mapa muscular (theme-aware): corpo, contorno e músculo não-treinado */
+  --map-bg:#14171C;
+  --map-line:#525E6B;
+  --map-off:#333B45;
   --font-ui:system-ui,"Roboto","Segoe UI",-apple-system,sans-serif;
   --font-num:ui-monospace,"Roboto Mono","DejaVu Sans Mono",monospace;
   --pad:16px;
+}
+/* ============================================================
+   TEMA CLARO — só os 7 neutros e as 3 cores do mapa mudam.
+   Os acentos (azul/vermelho/verde/amarelo) são os mesmos.
+   ============================================================ */
+:root[data-theme="light"]{
+  color-scheme:light;
+  --iron:#F3F1EC;
+  --iron-2:#FFFFFF;
+  --iron-3:#EAE7E0;
+  --line:#DAD6CD;
+  --chalk:#1A1D23;
+  --dim:#6C7079;
+  --dimmer:#A2A6AD;
+  --map-bg:#F3F1EC;
+  --map-line:#868D96;
+  --map-off:#C6C8C1;
 }
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html,body{margin:0;padding:0}
@@ -294,6 +326,10 @@ nav button.on{color:var(--chalk)}
   background:var(--iron-2);color:var(--dim);font-size:14px;font-weight:600;min-height:44px;
 }
 .chip.sel{border-color:var(--blue);color:var(--blue);background:rgba(44,111,209,.1)}
+/* linha de chips roláveis (filtro por grupo) — não quebra em várias linhas */
+.chips-scroll{display:flex;gap:8px;overflow-x:auto;padding-bottom:4px;margin-bottom:14px;-webkit-overflow-scrolling:touch;scrollbar-width:none}
+.chips-scroll::-webkit-scrollbar{display:none}
+.chips-scroll .chip{flex:none;white-space:nowrap;min-height:38px;padding:8px 14px;font-size:13px}
 .hr{height:1px;background:var(--line);margin:20px 0}
 .row{display:flex;gap:8px}
 .row>*{flex:1}
@@ -333,6 +369,7 @@ nav button.on{color:var(--chalk)}
   <div class="wrap">
     <div class="stats" id="hist-stats"></div>
     <div id="hist-cal"></div>
+    <div id="hist-filter"></div>
     <div id="sessions"></div>
   </div>
 </section>
@@ -345,6 +382,7 @@ nav button.on{color:var(--chalk)}
   </div>
   <div class="wrap">
     <input id="ex-search" placeholder="Buscar exercício" style="width:100%;margin-bottom:12px">
+    <div id="ex-filter"></div>
     <div id="ex-list"></div>
   </div>
 </section>
@@ -360,6 +398,13 @@ nav button.on{color:var(--chalk)}
       <p class="note" style="margin:0">Para tela cheia de verdade e o botão voltar funcionando como app,
       instale o Ferro: no menu do Chrome (⋮), toque em <b>Adicionar à tela inicial</b>.
       Aberto pela tela inicial, ele roda sem as barras do navegador.</p>
+    </div>
+    <div class="card">
+      <div class="eyebrow" style="margin-bottom:8px">Tema</div>
+      <div class="row">
+        <button class="btn btn-ghost theme-opt" data-theme="dark">Escuro</button>
+        <button class="btn btn-ghost theme-opt" data-theme="light">Claro</button>
+      </div>
     </div>
     <div class="card">
       <div class="card-row" style="margin-bottom:10px">
@@ -544,7 +589,7 @@ function fresh(){
     exercises: catalogList().map((e,i)=>({id:'e'+i, name:e.name, muscle:e.muscle, up:0})),
     routines: [],
     sessions: [],
-    cfg: {rest:90, inc:5, up:0}
+    cfg: {rest:90, inc:5, theme:'dark', up:0}
   };
 }
 let db;
@@ -556,7 +601,17 @@ if(!db.cfg) db.cfg={rest:90,inc:5};
 // opções de incremento mudaram (1/5/7/10): quem tinha 2,5 salvo vai para o vizinho (5)
 if(![1,5,7,10].includes(db.cfg.inc)) db.cfg.inc=5;
 if(db.cfg.restOn===undefined) db.cfg.restOn=true;   // default ligado (comportamento atual)
+if(db.cfg.theme!=='light') db.cfg.theme='dark';     // default escuro (comportamento atual)
 const save = ()=> LS.set(KEY, JSON.stringify(db));
+
+/* ---------- tema ---------- */
+const THEME_BAR={dark:'#14171C', light:'#F3F1EC'};   // cor da barra de status (Android)
+function applyTheme(t){
+  document.documentElement.setAttribute('data-theme', t==='light'?'light':'dark');
+  const m=document.querySelector('meta[name="theme-color"]');
+  if(m) m.setAttribute('content', THEME_BAR[t==='light'?'light':'dark']);
+}
+applyTheme(db.cfg.theme);
 
 /* ---------- utilidades ---------- */
 const $=s=>document.querySelector(s);
@@ -928,11 +983,15 @@ function pickExercise(cb){
   const back=$('#sheet-body').innerHTML, bE=$('#sheet-eyebrow').textContent,
         bT=$('#sheet-title').textContent, bF=$('#sheet-foot').innerHTML,
         wasFoot=$('#sheet-foot').classList.contains('on');
-  const draw=(q='')=>{
+  let filter=null;
+  const draw=(q='', keepScroll=false)=>{
+    const groups=sortByGroup([...new Set(EX().map(e=>e.muscle))]);
+    if(filter && !groups.includes(filter)) filter=null;
     const list=EX()
-      .filter(e=>norm(e.name).includes(norm(q))||norm(e.muscle).includes(norm(q)))
+      .filter(e=>(!filter||e.muscle===filter) && (norm(e.name).includes(norm(q))||norm(e.muscle).includes(norm(q))))
       .sort(byGroup);
     let html=`<input id="p-q" placeholder="Buscar" value="${esc(q)}" style="width:100%;margin-bottom:10px">`;
+    html+=chipRow(groups, filter);
     let m='';
     for(const e of list){
       if(e.muscle!==m){ m=e.muscle; html+=`<div class="eyebrow" style="margin:16px 0 2px">${esc(m)}</div>`; }
@@ -945,11 +1004,12 @@ function pickExercise(cb){
         <button class="btn btn-primary" id="p-new">Cadastrar${term?` “${esc(term)}”`:' exercício'}</button></div>`;
     }
     sheet('Adicionar','Escolha os exercícios',html,
-      `<button class="btn btn-primary" id="p-ok">Adicionar ${sel.size||''}</button>`);
+      `<button class="btn btn-primary" id="p-ok">Adicionar ${sel.size||''}</button>`, {keepScroll});
     const qi=$('#p-q');
     qi.oninput=e=>{ const v=e.target.value; draw(v); const n=$('#p-q'); n.focus(); n.setSelectionRange(v.length,v.length); };
+    $('#sheet-body').querySelectorAll('[data-grp]').forEach(b=>b.onclick=()=>{ filter=b.dataset.grp||null; draw($('#p-q').value); });
     $('#sheet-body').querySelectorAll('[data-p]').forEach(b=>b.onclick=()=>{
-      const id=b.dataset.p; sel.has(id)?sel.delete(id):sel.add(id); draw($('#p-q').value);
+      const id=b.dataset.p; sel.has(id)?sel.delete(id):sel.add(id); draw($('#p-q').value, true);
     });
     const pn=$('#p-new');
     // cadastra sem sair do fluxo: volta para a lista com o novo exercício já marcado
@@ -1337,8 +1397,27 @@ $('#rest-plus').onclick=()=>{ restLeft+=30; paintRest(); };
 /* ==========================================================
    HISTÓRICO
    ========================================================== */
+/* ==========================================================
+   FILTRO POR GRUPO MUSCULAR (histórico, treino concluído, exercícios)
+   ========================================================== */
+// grupos treinados numa sessão (base do filtro e dos chips)
+const sessMuscles=s=>{ const set=new Set(); for(const e of s.entries){ const m=exOf(e.exerciseId)?.muscle; if(m) set.add(m); } return set; };
+const sortByGroup=arr=>arr.slice().sort((a,b)=>gidx(a)-gidx(b));
+// linha rolável "Todos" + grupos; marca o selecionado (sel=null → "Todos")
+function chipRow(groups, sel){
+  return `<div class="chips-scroll">
+    <button class="chip ${!sel?'sel':''}" data-grp="">Todos</button>
+    ${groups.map(g=>`<button class="chip ${g===sel?'sel':''}" data-grp="${esc(g)}">${esc(g)}</button>`).join('')}
+  </div>`;
+}
+let histFilter=null;   // grupo selecionado no histórico (null = todos)
+const histSessions=()=> histFilter ? SESS().filter(s=>sessMuscles(s).has(histFilter)) : SESS();
+
 function renderHist(){
-  const ss=[...SESS()].sort((a,b)=>b.date-a.date);
+  const all=[...SESS()];
+  const groups=sortByGroup([...new Set(all.flatMap(s=>[...sessMuscles(s)]))]);
+  if(histFilter && !groups.includes(histFilter)) histFilter=null;   // grupo sumiu → limpa
+  const ss=[...histSessions()].sort((a,b)=>b.date-a.date);
   const week=ss.filter(s=>Date.now()-s.date < 7*864e5).length;
   const vol=ss.reduce((a,s)=>a+volume(s),0);
   $('#hist-stats').innerHTML=`
@@ -1348,8 +1427,13 @@ function renderHist(){
 
   renderCalendar();
 
+  // filtro por grupo — reflete em lista, calendário e stats (todos usam histSessions/histFilter)
+  const hf=$('#hist-filter');
+  hf.innerHTML = all.length ? chipRow(groups, histFilter) : '';
+  hf.querySelectorAll('[data-grp]').forEach(b=>b.onclick=()=>{ histFilter=b.dataset.grp||null; renderHist(); });
+
   const c=$('#sessions');
-  if(!ss.length){
+  if(!all.length){
     c.innerHTML=`<div class="empty"><h2>Nada registrado</h2><p>Seus treinos concluídos aparecem aqui.</p></div>`;
     return;
   }
@@ -1379,7 +1463,7 @@ let calView=null;   // primeiro dia do mês exibido; null = mês atual
 
 function calStreak(){
   // dias consecutivos até hoje com ao menos um treino (conta a partir de ontem se hoje ainda não treinou)
-  const set=new Set(SESS().map(s=>calYmd(s.date)));
+  const set=new Set(histSessions().map(s=>calYmd(s.date)));
   let n=0; const d=new Date();
   if(!set.has(calYmd(d.getTime()))) d.setDate(d.getDate()-1);
   while(set.has(calYmd(d.getTime()))){ n++; d.setDate(d.getDate()-1); }
@@ -1388,8 +1472,8 @@ function calStreak(){
 
 function renderCalendar(){
   const el=$('#hist-cal'); if(!el) return;
-  const ss=SESS();
-  if(!ss.length){ el.innerHTML=''; return; }
+  const ss=histSessions();
+  if(!SESS().length){ el.innerHTML=''; return; }
 
   const now=new Date();
   if(!calView) calView=new Date(now.getFullYear(), now.getMonth(), 1);
@@ -1450,7 +1534,7 @@ function renderCalendar(){
 
 function showSession(id){
   const s=SESS().find(x=>x.id===id);
-  const body=s.entries.map(en=>{
+  const entryBlock=en=>{
     // melhor série de trabalho deste exercício nesta sessão → 1RM estimado
     let top=0, bestSet=null;
     for(const t of en.sets){
@@ -1481,7 +1565,18 @@ function showSession(id){
           </span>
           ${i===lastPrIdx?`<span class="tag tag-pr">🏆 PR</span>`:''}
         </div>`; }).join(''); })()}
-    </div>`; }).join('');
+    </div>`; };
+  // filtro por grupo dentro do treino: filtra só os exercícios/séries; stats e mapa
+  // continuam mostrando o treino inteiro.
+  const groups=sortByGroup([...sessMuscles(s)]);
+  let filter=null;
+  const drawFilter=()=>{
+    $('#ss-filter').innerHTML = groups.length>1 ? chipRow(groups, filter) : '';
+    $('#ss-body').innerHTML = s.entries
+      .filter(en=> !filter || exOf(en.exerciseId)?.muscle===filter)
+      .map(entryBlock).join('');
+    $('#ss-filter').querySelectorAll('[data-grp]').forEach(b=>b.onclick=()=>{ filter=b.dataset.grp||null; drawFilter(); });
+  };
   sheet(dayFull(s.date), s.name,
     `<div class="stats">
       <div class="stat"><span class="num">${clock(s.durationSec)}</span><span class="eyebrow">Duração</span></div>
@@ -1491,8 +1586,10 @@ function showSession(id){
      <div class="eyebrow" style="margin:4px 0 8px">Músculos treinados</div>
      ${muscleMap(volumeByGroup(s))}
      <div style="height:14px"></div>
-     ${body}
+     <div id="ss-filter"></div>
+     <div id="ss-body"></div>
      <button class="btn btn-danger" id="h-del" style="margin-top:20px">Excluir treino</button>`);
+  drawFilter();
   $('#h-del').onclick=()=>{
     if(!confirm('Excluir este treino do histórico?')) return;
     const alvo=db.sessions.find(x=>x.id===id);
@@ -1504,10 +1601,18 @@ function showSession(id){
 /* ==========================================================
    EXERCÍCIOS
    ========================================================== */
+let exFilter=null;   // grupo selecionado na aba Exercícios (null = todos)
 function renderEx(){
   const q=norm($('#ex-search').value);
+  // chips com os grupos que têm exercício no catálogo
+  const groups=sortByGroup([...new Set(EX().map(e=>e.muscle))]);
+  if(exFilter && !groups.includes(exFilter)) exFilter=null;   // grupo sumiu → limpa
+  const ef=$('#ex-filter');
+  ef.innerHTML = chipRow(groups, exFilter);
+  ef.querySelectorAll('[data-grp]').forEach(b=>b.onclick=()=>{ exFilter=b.dataset.grp||null; renderEx(); });
+
   const list=EX()
-    .filter(e=>norm(e.name).includes(q)||norm(e.muscle).includes(q))
+    .filter(e=>(!exFilter || e.muscle===exFilter) && (norm(e.name).includes(q)||norm(e.muscle).includes(q)))
     .sort(byGroup);
   let html='', m='';
   for(const e of list){
@@ -1640,7 +1745,8 @@ function volumeByGroup(s){
 
 /* Mapa muscular — corpo em contorno (v5), SVG puro, offline. Encapsulado para não vazar nomes curtos (E,P,half...) no escopo global. */
 const muscleMap=(()=>{
-const BG='#14171C', LINE='#525E6B', OFF='#333B45';
+// lidas do tema a cada render (ver atualização em muscleMap); fallback = tema escuro
+let BG='#14171C', LINE='#525E6B', OFF='#333B45';
 const RED='#C8362D', YEL='#E8B32C';
 
 const E=(cx,cy,rx,ry,rot)=>({t:'e',cx,cy,rx,ry,rot:rot||0});
@@ -1726,6 +1832,11 @@ function half(side, dx, colorOf){
 function muscleMap(vol){
   const vals=Object.values(vol||{});
   if(!vals.length) return '';
+  // puxa as cores do tema atual (as demais funções leem BG/LINE/OFF do closure)
+  const cs=getComputedStyle(document.documentElement);
+  BG   = cs.getPropertyValue('--map-bg').trim()   || BG;
+  LINE = cs.getPropertyValue('--map-line').trim() || LINE;
+  OFF  = cs.getPropertyValue('--map-off').trim()  || OFF;
   const max=Math.max(...vals);
   const colorOf=g=>{const v=vol[g]||0; return !v||!max?OFF: v>=max*.5?RED:YEL;};
   return `<svg viewBox="0 0 216 168" xmlns="http://www.w3.org/2000/svg"
@@ -1785,6 +1896,9 @@ function renderCfg(){
   $$('.inc-opt').forEach(b=>{ const on=+b.dataset.i===db.cfg.inc;
     b.style.borderColor=on?'var(--blue)':'var(--line)'; b.style.color=on?'#fff':'var(--chalk)';
     b.style.background=on?'var(--blue)':'var(--iron-3)'; });
+  $$('.theme-opt').forEach(b=>{ const on=b.dataset.theme===db.cfg.theme;
+    b.style.borderColor=on?'var(--blue)':'var(--line)'; b.style.color=on?'#fff':'var(--chalk)';
+    b.style.background=on?'var(--blue)':'var(--iron-3)'; });
   const cache = swVersion ? `v${swVersion}` : (location.protocol.startsWith('http') ? 'ainda não instalado' : 'não se aplica (arquivo local)');
   const divergiu = swVersion && swVersion!==APP_VERSION;
   $('#ver-info').innerHTML =
@@ -1802,6 +1916,7 @@ $('#rest-toggle').onclick=()=>{
 };
 $$('.rest-opt').forEach(b=>b.onclick=()=>{ db.cfg.rest=+b.dataset.s; db.cfg.up=Date.now(); save(); renderCfg(); });
 $$('.inc-opt').forEach(b=>b.onclick=()=>{ db.cfg.inc=+b.dataset.i; db.cfg.up=Date.now(); save(); renderCfg(); });
+$$('.theme-opt').forEach(b=>b.onclick=()=>{ db.cfg.theme=b.dataset.theme; db.cfg.up=Date.now(); save(); applyTheme(db.cfg.theme); renderCfg(); });
 
 /* ---------- backup JSON: exporta tudo, inclusive lápides ---------- */
 function baixar(nome, texto, mime){
@@ -1912,8 +2027,8 @@ $('#btn-wipe').onclick=()=>{
    O app pergunta ao service worker qual versão ele está servindo — se as duas
    não baterem, você está vendo arquivo velho, e o app te avisa disso.
    ========================================================== */
-const APP_VERSION='1.15.0';
-const APP_DATE='29/07/2026';
+const APP_VERSION='1.16.0';
+const APP_DATE='30/07/2026';
 let swReg=null, swVersion=null, reloading=false;
 
 function showUpdate(){ $('#update').classList.add('on'); }
