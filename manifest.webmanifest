@@ -1,8 +1,12 @@
 {
+  "id": "/treino/",
   "name": "Ferro — registro de treinos",
   "short_name": "Ferro",
+  "description": "Registro de treinos de musculação — offline, sem contas e sem anúncios. Rotinas, histórico, recordes e mapa muscular; seus dados ficam só no aparelho.",
   "start_url": "./index.html",
   "scope": "./",
+  "categories": ["health", "fitness", "sports"],
+  "lang": "pt-BR",
   "display": "standalone",
   "display_override": ["standalone", "minimal-ui"],
   "orientation": "portrait",
